@@ -442,11 +442,12 @@ def create_daily_dashboard_card(summary: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def create_workout_splits_carousel() -> Dict[str, Any]:
+def create_workout_splits_carousel(splits_data: Dict[str, Any] = None) -> Dict[str, Any]:
     """Generate Carousel of Suphakorn's 4-Day Workout Split + Incline Walk."""
     bubbles = []
+    source_splits = splits_data if splits_data else WORKOUT_SPLITS
 
-    for split_id, split in WORKOUT_SPLITS.items():
+    for split_id, split in source_splits.items():
         exercise_lines = []
         for ex in split["exercises"]:
             exercise_lines.append({
@@ -481,6 +482,7 @@ def create_workout_splits_carousel() -> Dict[str, Any]:
             "footer": {
                 "type": "box",
                 "layout": "vertical",
+                "spacing": "xs",
                 "paddingAll": "10px",
                 "contents": [
                     {
@@ -492,6 +494,16 @@ def create_workout_splits_carousel() -> Dict[str, Any]:
                             "type": "postback",
                             "label": f"✅ จบ {split['name'].split(':')[0]}",
                             "data": f"action=log_workout&split_id={split_id}"
+                        }
+                    },
+                    {
+                        "type": "button",
+                        "style": "secondary",
+                        "height": "sm",
+                        "action": {
+                            "type": "postback",
+                            "label": "✏️ แก้ไขน้ำหนักที่เล่น",
+                            "data": f"action=edit_split_prompt&split_id={split_id}"
                         }
                     }
                 ]
@@ -930,6 +942,307 @@ def create_food_history_card(history_items: List[Dict[str, Any]]) -> Dict[str, A
                         "type": "postback",
                         "label": "📊 ดูสรุปยอดวันนี้",
                         "data": "action=view_dashboard"
+                    }
+                }
+            ]
+        }
+    }
+
+
+def create_main_hub_card() -> Dict[str, Any]:
+    """Generate the Visual Main Hub / Menu Card for all bot features."""
+    return {
+        "type": "bubble",
+        "size": "giga",
+        "header": {
+            "type": "box",
+            "layout": "vertical",
+            "backgroundColor": "#0F172A",
+            "paddingAll": "18px",
+            "contents": [
+                {
+                    "type": "text",
+                    "text": "🌟 CALORIE & FITNESS COMPANION",
+                    "size": "xs",
+                    "weight": "bold",
+                    "color": "#38BDF8"
+                },
+                {
+                    "type": "text",
+                    "text": "ศูนย์รวมคำสั่งใช้งาน (Main Menu)",
+                    "size": "lg",
+                    "weight": "bold",
+                    "color": "#FFFFFF",
+                    "margin": "xs"
+                },
+                {
+                    "type": "text",
+                    "text": "แตะเลือกฟังก์ชันที่ต้องการได้ทันที ไม่ต้องจำคำสั่งพิมพ์ครับ",
+                    "size": "xxs",
+                    "color": "#94A3B8",
+                    "margin": "xs"
+                }
+            ]
+        },
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "paddingAll": "16px",
+            "spacing": "sm",
+            "contents": [
+                # Row 1: Camera & Dashboard
+                {
+                    "type": "box",
+                    "layout": "horizontal",
+                    "spacing": "sm",
+                    "contents": [
+                        {
+                            "type": "box",
+                            "layout": "vertical",
+                            "backgroundColor": "#ECFDF5",
+                            "cornerRadius": "10px",
+                            "paddingAll": "12px",
+                            "flex": 1,
+                            "action": {
+                                "type": "uri",
+                                "label": "ถ่ายรูปอาหาร",
+                                "uri": "https://line.me/R/nv/camera/"
+                            },
+                            "contents": [
+                                {"type": "text", "text": "📸 ถ่ายรูปอาหาร", "size": "sm", "weight": "bold", "color": "#065F46"},
+                                {"type": "text", "text": "เปิดกล้องสแกนแคล", "size": "xxs", "color": "#047857", "margin": "xs"}
+                            ]
+                        },
+                        {
+                            "type": "box",
+                            "layout": "vertical",
+                            "backgroundColor": "#EFF6FF",
+                            "cornerRadius": "10px",
+                            "paddingAll": "12px",
+                            "flex": 1,
+                            "action": {
+                                "type": "postback",
+                                "label": "สรุปยอดวันนี้",
+                                "data": "action=view_dashboard"
+                            },
+                            "contents": [
+                                {"type": "text", "text": "📊 สรุปยอดวันนี้", "size": "sm", "weight": "bold", "color": "#1E40AF"},
+                                {"type": "text", "text": "ดูโควตา & Balance", "size": "xxs", "color": "#2563EB", "margin": "xs"}
+                            ]
+                        }
+                    ]
+                },
+                # Row 2: Workout 4-Day & Incline Walk
+                {
+                    "type": "box",
+                    "layout": "horizontal",
+                    "spacing": "sm",
+                    "contents": [
+                        {
+                            "type": "box",
+                            "layout": "vertical",
+                            "backgroundColor": "#F5F3FF",
+                            "cornerRadius": "10px",
+                            "paddingAll": "12px",
+                            "flex": 1,
+                            "action": {
+                                "type": "postback",
+                                "label": "ตารางเวท 4 วัน",
+                                "data": "action=view_workouts"
+                            },
+                            "contents": [
+                                {"type": "text", "text": "🏋️‍♂️ ตารางเวท 4 วัน", "size": "sm", "weight": "bold", "color": "#5B21B6"},
+                                {"type": "text", "text": "Push/Pull/Lower/Upper", "size": "xxs", "color": "#6D28D9", "margin": "xs"}
+                            ]
+                        },
+                        {
+                            "type": "box",
+                            "layout": "vertical",
+                            "backgroundColor": "#F0FDF4",
+                            "cornerRadius": "10px",
+                            "paddingAll": "12px",
+                            "flex": 1,
+                            "action": {
+                                "type": "postback",
+                                "label": "เดินชัน",
+                                "data": "action=view_workouts"
+                            },
+                            "contents": [
+                                {"type": "text", "text": "🏃 เดินชัน Cardio", "size": "sm", "weight": "bold", "color": "#166534"},
+                                {"type": "text", "text": "40 / 50 / 60 นาที", "size": "xxs", "color": "#15803D", "margin": "xs"}
+                            ]
+                        }
+                    ]
+                },
+                # Row 3: Quick Snacks & Weekly Stats
+                {
+                    "type": "box",
+                    "layout": "horizontal",
+                    "spacing": "sm",
+                    "contents": [
+                        {
+                            "type": "box",
+                            "layout": "vertical",
+                            "backgroundColor": "#FEF3C7",
+                            "cornerRadius": "10px",
+                            "paddingAll": "12px",
+                            "flex": 1,
+                            "action": {
+                                "type": "postback",
+                                "label": "Quick Snacks",
+                                "data": "action=view_snacks"
+                            },
+                            "contents": [
+                                {"type": "text", "text": "⚡ Quick Snacks", "size": "sm", "weight": "bold", "color": "#92400E"},
+                                {"type": "text", "text": "กล้วย นม มัจฉะ ถั่ว", "size": "xxs", "color": "#B45309", "margin": "xs"}
+                            ]
+                        },
+                        {
+                            "type": "box",
+                            "layout": "vertical",
+                            "backgroundColor": "#FDF2F8",
+                            "cornerRadius": "10px",
+                            "paddingAll": "12px",
+                            "flex": 1,
+                            "action": {
+                                "type": "postback",
+                                "label": "สถิติ 7 วัน",
+                                "data": "action=view_weekly_stats"
+                            },
+                            "contents": [
+                                {"type": "text", "text": "📈 สถิติ 7 วัน", "size": "sm", "weight": "bold", "color": "#9D174D"},
+                                {"type": "text", "text": "เฉลี่ยแคล & โปรตีน", "size": "xxs", "color": "#BE185D", "margin": "xs"}
+                            ]
+                        }
+                    ]
+                },
+                # Row 4: Edit Routine & Weights Button
+                {
+                    "type": "box",
+                    "layout": "vertical",
+                    "backgroundColor": "#F1F5F9",
+                    "cornerRadius": "10px",
+                    "paddingAll": "12px",
+                    "action": {
+                        "type": "postback",
+                        "label": "แก้ไขน้ำหนักเวท",
+                        "data": "action=view_edit_menu"
+                    },
+                    "contents": [
+                        {"type": "text", "text": "✏️ ปรับแก้ตารางและน้ำหนักที่เล่น (Edit Weights)", "size": "xs", "weight": "bold", "color": "#334155", "align": "center"}
+                    ]
+                }
+            ]
+        }
+    }
+
+
+def create_edit_split_prompt_card(split: Dict[str, Any]) -> Dict[str, Any]:
+    """Generate prompt card showing exercises and how to update weight."""
+    exercise_lines = []
+    for ex in split["exercises"]:
+        exercise_lines.append({
+            "type": "box",
+            "layout": "horizontal",
+            "paddingAll": "4px",
+            "contents": [
+                {"type": "text", "text": f"• {ex['name']}", "size": "xs", "color": "#1E293B", "flex": 4},
+                {"type": "text", "text": ex["weight"], "size": "xs", "weight": "bold", "color": "#2563EB", "align": "end", "flex": 2}
+            ]
+        })
+
+    return {
+        "type": "bubble",
+        "size": "mega",
+        "header": {
+            "type": "box",
+            "layout": "vertical",
+            "backgroundColor": "#1E293B",
+            "paddingAll": "16px",
+            "contents": [
+                {"type": "text", "text": "✏️ แก้ไขน้ำหนักเวท", "color": "#38BDF8", "size": "xs", "weight": "bold"},
+                {"type": "text", "text": split["name"], "color": "#FFFFFF", "size": "md", "weight": "bold", "margin": "xs"}
+            ]
+        },
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "paddingAll": "14px",
+            "spacing": "xs",
+            "contents": [
+                {"type": "text", "text": "รายการท่าและน้ำหนักปัจจุบัน:", "size": "xs", "weight": "bold", "color": "#64748B"},
+                *exercise_lines,
+                {
+                    "type": "box",
+                    "layout": "vertical",
+                    "backgroundColor": "#FEF3C7",
+                    "cornerRadius": "8px",
+                    "paddingAll": "10px",
+                    "margin": "md",
+                    "contents": [
+                        {"type": "text", "text": "💡 วิธีเปลี่ยนน้ำหนัก:", "size": "xs", "weight": "bold", "color": "#92400E"},
+                        {"type": "text", "text": "พิมพ์: แก้น้ำหนัก [ชื่อท่า] [น้ำหนัก]\nเช่น:\n• แก้น้ำหนัก pec dec fly 45\n• แก้น้ำหนัก bench press 25\n• แก้น้ำหนัก lat pull down 40", "size": "xxs", "color": "#78350F", "wrap": True, "margin": "xs"}
+                    ]
+                }
+            ]
+        },
+        "footer": {
+            "type": "box",
+            "layout": "vertical",
+            "paddingAll": "10px",
+            "contents": [
+                {
+                    "type": "button",
+                    "style": "secondary",
+                    "height": "sm",
+                    "action": {
+                        "type": "postback",
+                        "label": "🏋️ กลับไปดูตารางเวท",
+                        "data": "action=view_workouts"
+                    }
+                }
+            ]
+        }
+    }
+
+
+def create_weight_updated_card(exercise_name: str, new_weight: str) -> Dict[str, Any]:
+    """Generate confirmation card after weight is updated."""
+    return {
+        "type": "bubble",
+        "size": "kilo",
+        "header": {
+            "type": "box",
+            "layout": "vertical",
+            "backgroundColor": "#059669",
+            "paddingAll": "14px",
+            "contents": [
+                {"type": "text", "text": "✅ อัปเดตน้ำหนักสำเร็จ!", "color": "#FFFFFF", "size": "sm", "weight": "bold"}
+            ]
+        },
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "paddingAll": "14px",
+            "contents": [
+                {"type": "text", "text": f"ท่า: {exercise_name}", "size": "sm", "weight": "bold", "color": "#1E293B"},
+                {"type": "text", "text": f"น้ำหนักใหม่: {new_weight}", "size": "md", "weight": "bold", "color": "#2563EB", "margin": "xs"},
+                {"type": "text", "text": "บันทึกลงในฐานข้อมูลเรียบร้อย", "size": "xxs", "color": "#64748B", "margin": "xs"}
+            ]
+        },
+        "footer": {
+            "type": "box",
+            "layout": "vertical",
+            "paddingAll": "10px",
+            "contents": [
+                {
+                    "type": "button",
+                    "style": "secondary",
+                    "height": "sm",
+                    "action": {
+                        "type": "postback",
+                        "label": "🏋️ ดูตารางเวทที่อัปเดตแล้ว",
+                        "data": "action=view_workouts"
                     }
                 }
             ]

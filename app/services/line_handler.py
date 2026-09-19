@@ -13,7 +13,11 @@ from linebot.v3.messaging import (
     ReplyMessageRequest,
     TextMessage,
     FlexMessage,
-    FlexContainer
+    FlexContainer,
+    QuickReply,
+    QuickReplyItem,
+    MessageAction,
+    PostbackAction
 )
 from linebot.v3.webhooks import (
     MessageEvent,
@@ -30,6 +34,8 @@ from app.services.fitness import (
     get_daily_summary,
     get_weekly_stats,
     get_past_food_history,
+    get_user_splits,
+    update_exercise_weight,
     calculate_incline_walk_burn
 )
 from app.services.ai_vision import analyze_food_image
@@ -41,13 +47,29 @@ from app.templates.flex_cards import (
     create_quick_snacks_card,
     create_workout_logged_card,
     create_weekly_stats_card,
-    create_food_history_card
+    create_food_history_card,
+    create_main_hub_card,
+    create_edit_split_prompt_card,
+    create_weight_updated_card
 )
 
 logger = logging.getLogger(__name__)
 
 # Temporary cache for food scans awaiting user confirmation: temp_id -> food_data
 PENDING_FOOD_SCANS: Dict[str, Dict[str, Any]] = {}
+
+
+def get_default_quick_reply() -> QuickReply:
+    """Always attach floating quick-action buttons above the user's keyboard."""
+    return QuickReply(items=[
+        QuickReplyItem(action=MessageAction(label="📊 สรุปวันนี้", text="สรุป")),
+        QuickReplyItem(action=MessageAction(label="🏋️ ตารางเวท", text="เวท")),
+        QuickReplyItem(action=MessageAction(label="🏃 เดินชัน 40น.", text="เดินชัน 40")),
+        QuickReplyItem(action=MessageAction(label="🍌 กล้วย", text="กล้วย")),
+        QuickReplyItem(action=MessageAction(label="🍵 มัจฉะ", text="มัจฉะ")),
+        QuickReplyItem(action=MessageAction(label="📈 สถิติ 7 วัน", text="สถิติ")),
+        QuickReplyItem(action=MessageAction(label="✏️ แก้น้ำหนัก", text="แก้น้ำหนัก"))
+    ])
 
 
 def get_line_clients():
@@ -60,9 +82,9 @@ def get_line_clients():
 
 
 def reply_flex(messaging_api: MessagingApi, reply_token: str, alt_text: str, flex_dict: Dict[str, Any]):
-    """Helper to reply with a LINE Flex Message."""
+    """Helper to reply with a LINE Flex Message and floating Quick Reply buttons."""
     container = FlexContainer.from_dict(flex_dict)
-    flex_msg = FlexMessage(alt_text=alt_text, contents=container)
+    flex_msg = FlexMessage(alt_text=alt_text, contents=container, quick_reply=get_default_quick_reply())
     messaging_api.reply_message(
         ReplyMessageRequest(
             reply_token=reply_token,
@@ -72,11 +94,12 @@ def reply_flex(messaging_api: MessagingApi, reply_token: str, alt_text: str, fle
 
 
 def reply_text(messaging_api: MessagingApi, reply_token: str, text: str):
-    """Helper to reply with a plain text message."""
+    """Helper to reply with a plain text message and floating Quick Reply buttons."""
+    msg = TextMessage(text=text, quick_reply=get_default_quick_reply())
     messaging_api.reply_message(
         ReplyMessageRequest(
             reply_token=reply_token,
-            messages=[TextMessage(text=text)]
+            messages=[msg]
         )
     )
 
@@ -157,6 +180,29 @@ def handle_text_message(event: MessageEvent, user_id: str, messaging_api: Messag
         reply_flex(messaging_api, event.reply_token, "ประวัติรายการอาหารล่าสุด", card)
         return
 
+    # 0.3 Edit Exercise Weights
+    if any(k in text for k in ["แก้น้ำหนัก", "ปรับน้ำหนัก", "เปลี่ยนน้ำหนัก", "แก้ไขน้ำหนัก"]):
+        cleaned = text.replace("แก้ไขน้ำหนัก", "").replace("ปรับน้ำหนัก", "").replace("เปลี่ยนน้ำหนัก", "").replace("แก้น้ำหนัก", "").strip()
+        tokens = cleaned.split()
+        if len(tokens) >= 2:
+            new_weight = tokens[-1]
+            if not new_weight.endswith("kg") and not new_weight.endswith("กก"):
+                new_weight += " kg"
+            exercise_query = " ".join(tokens[:-1])
+            updated = update_exercise_weight(db, user_id, exercise_query, new_weight)
+            if updated:
+                card = create_weight_updated_card(updated.name, updated.weight)
+                reply_flex(messaging_api, event.reply_token, f"อัปเดตน้ำหนัก {updated.name} แล้ว", card)
+                return
+            else:
+                reply_text(messaging_api, event.reply_token, f"❌ ไม่พบชื่อท่า '{exercise_query}' ในตารางเวทครับ ลองพิมพ์ 'เวท' เพื่อดูชื่อท่าที่ถูกต้องได้เลยครับ")
+                return
+        else:
+            user_splits = get_user_splits(db, user_id)
+            carousel = create_workout_splits_carousel(user_splits)
+            reply_flex(messaging_api, event.reply_token, "แตะปุ่ม '✏️ แก้ไขน้ำหนักที่เล่น' ในการ์ดตารางเวทได้เลยครับ", carousel)
+            return
+
     # 1. Daily Dashboard / Balance Summary
     if any(k in text for k in ["สรุป", "ยอด", "balance", "dashboard", "แคล", "วันนี้"]):
         summary = get_daily_summary(db, user_id)
@@ -166,7 +212,8 @@ def handle_text_message(event: MessageEvent, user_id: str, messaging_api: Messag
 
     # 2. Workout Split Menu
     if any(k in text for k in ["เวท", "ตาราง", "workout", "ออกกำลังกาย"]):
-        carousel = create_workout_splits_carousel()
+        user_splits = get_user_splits(db, user_id)
+        carousel = create_workout_splits_carousel(user_splits)
         reply_flex(messaging_api, event.reply_token, "ตารางออกกำลังกายประจำสัปดาห์ 4 วัน", carousel)
         return
 
@@ -239,17 +286,9 @@ def handle_text_message(event: MessageEvent, user_id: str, messaging_api: Messag
         reply_flex(messaging_api, event.reply_token, f"บันทึกเดินชัน {duration} นาที", card)
         return
 
-    # Default Help Message
-    help_text = (
-        "👋 สวัสดีครับ คุณศุภกร! พร้อมดูแลสุขภาพและฟิตเนสวันนี้\n\n"
-        "คำสั่งที่ใช้งานได้:\n"
-        "📸 ส่งรูปอาหาร เพื่อให้ AI วิเคราะห์แคลอรีและสารอาหาร\n"
-        "📊 พิมพ์ 'สรุป' หรือ 'แคล' เพื่อดูแดชบอร์ดพลังงานวันนี้\n"
-        "🏋️ พิมพ์ 'เวท' หรือ 'ตาราง' เพื่อดูและบันทึกเวท 4 วัน\n"
-        "🏃 พิมพ์ 'เดินชัน 40' / '50' / '60' เพื่อบันทึกคาร์ดิโอ\n"
-        "⚡ พิมพ์ 'กล้วย', 'นม', 'มัจฉะ', 'ถั่ว' เพื่อบันทึกของว่างทันที"
-    )
-    reply_text(messaging_api, event.reply_token, help_text)
+    # 6. Default Fallback: Send Interactive Visual Main Hub!
+    main_hub = create_main_hub_card()
+    reply_flex(messaging_api, event.reply_token, "ศูนย์รวมคำสั่งใช้งาน (Main Menu)", main_hub)
 
 
 def handle_postback_event(event: PostbackEvent, user_id: str, messaging_api: MessagingApi, db: Session):
@@ -310,8 +349,25 @@ def handle_postback_event(event: PostbackEvent, user_id: str, messaging_api: Mes
         reply_flex(messaging_api, event.reply_token, "สรุปยอดวันนี้", card)
 
     elif action == "view_workouts":
-        carousel = create_workout_splits_carousel()
+        user_splits = get_user_splits(db, user_id)
+        carousel = create_workout_splits_carousel(user_splits)
         reply_flex(messaging_api, event.reply_token, "ตารางออกกำลังกาย 4 วัน", carousel)
+
+    elif action == "edit_split_prompt":
+        split_id = query_params.get("split_id", "day_1")
+        user_splits = get_user_splits(db, user_id)
+        split = user_splits.get(split_id, user_splits["day_1"])
+        card = create_edit_split_prompt_card(split)
+        reply_flex(messaging_api, event.reply_token, f"แก้ไขน้ำหนัก {split['name']}", card)
+
+    elif action == "view_edit_menu":
+        user_splits = get_user_splits(db, user_id)
+        carousel = create_workout_splits_carousel(user_splits)
+        reply_flex(messaging_api, event.reply_token, "แตะปุ่ม '✏️ แก้ไขน้ำหนักที่เล่น' ในการ์ดตารางเวทได้เลยครับ", carousel)
+
+    elif action == "view_main_menu":
+        main_hub = create_main_hub_card()
+        reply_flex(messaging_api, event.reply_token, "ศูนย์รวมคำสั่งใช้งาน", main_hub)
 
     elif action == "view_weekly_stats":
         stats = get_weekly_stats(db, user_id, days=7)

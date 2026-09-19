@@ -117,3 +117,29 @@ def test_daily_summary_workflow(db_session):
     history = get_past_food_history(db_session, user_id, limit=5)
     assert len(history) == 2
     assert history[0]["name"] in ["กล้วยหอม 1 ลูก", "ข้าวกะเพราอกไก่"]
+
+
+def test_user_exercise_weight_update(db_session):
+    """Test dynamic weight updating for 4-day workout splits."""
+    from app.services.fitness import get_user_splits, update_exercise_weight
+
+    user_id = "test_user_weight_edit"
+    get_or_create_user(db_session, user_id, settings)
+
+    # Initially seeded with presets
+    splits = get_user_splits(db_session, user_id)
+    assert "day_1" in splits
+    pec_dec = next((ex for ex in splits["day_1"]["exercises"] if "pec dec" in ex["name"].lower()), None)
+    assert pec_dec is not None
+    assert pec_dec["weight"] == "40 kg"
+
+    # Update weight
+    updated = update_exercise_weight(db_session, user_id, "pec dec fly", "45 kg")
+    assert updated is not None
+    assert updated.weight == "45 kg"
+
+    # Verify updated in splits
+    new_splits = get_user_splits(db_session, user_id)
+    new_pec_dec = next((ex for ex in new_splits["day_1"]["exercises"] if "pec dec" in ex["name"].lower()), None)
+    assert new_pec_dec["weight"] == "45 kg"
+

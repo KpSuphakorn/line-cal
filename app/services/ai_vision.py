@@ -53,12 +53,12 @@ def analyze_food_image(image_bytes: bytes) -> Dict[str, Any]:
         import google.generativeai as genai
         genai.configure(api_key=settings.GEMINI_API_KEY)
 
-        # Try gemini-2.0-flash or fallback to gemini-1.5-flash
-        model_name = "gemini-2.0-flash"
+        # Use latest active gemini model: gemini-3.6-flash
+        model_name = "gemini-3.6-flash"
         try:
             model = genai.GenerativeModel(model_name)
         except Exception:
-            model = genai.GenerativeModel("gemini-1.5-flash")
+            model = genai.GenerativeModel("gemini-flash-latest")
 
         image = Image.open(BytesIO(image_bytes))
 

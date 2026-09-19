@@ -23,6 +23,7 @@ class User(Base):
 
     food_logs = relationship("FoodLog", back_populates="user", cascade="all, delete-orphan")
     workout_logs = relationship("WorkoutLog", back_populates="user", cascade="all, delete-orphan")
+    exercises = relationship("UserExercise", back_populates="user", cascade="all, delete-orphan")
 
 
 class FoodLog(Base):
@@ -56,3 +57,18 @@ class WorkoutLog(Base):
     logged_at = Column(DateTime, default=datetime.now, index=True)
 
     user = relationship("User", back_populates="workout_logs")
+
+
+class UserExercise(Base):
+    __tablename__ = "user_exercises"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String(64), ForeignKey("users.id"), index=True)
+    split_id = Column(String(20), nullable=False) # day_1, day_2, day_3, day_4
+    name = Column(String(100), nullable=False)
+    weight = Column(String(50), default="20 kg")
+    target = Column(String(100), default="กล้ามเนื้อ")
+    order_num = Column(Integer, default=1)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+    user = relationship("User", back_populates="exercises")

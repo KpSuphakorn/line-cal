@@ -1,9 +1,79 @@
 """Fitness and Nutrition calculations engine."""
 from datetime import datetime, date, time
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import func
-from app.db.models import User, FoodLog, WorkoutLog
+from app.db.models import User, FoodLog, WorkoutLog, UserExercise
+from app.data.presets import WORKOUT_SPLITS
+
+
+def seed_user_exercises_if_needed(db: Session, user_id: str):
+    """Seed user default workout exercises into DB if not already present."""
+    count = db.query(UserExercise).filter(UserExercise.user_id == user_id).count()
+    if count > 0:
+        return
+
+    for split_id, split in WORKOUT_SPLITS.items():
+        for idx, ex in enumerate(split["exercises"]):
+            item = UserExercise(
+                user_id=user_id,
+                split_id=split_id,
+                name=ex["name"],
+                weight=ex["weight"],
+                target=ex["target"],
+                order_num=idx + 1
+            )
+            db.add(item)
+    db.commit()
+
+
+def get_user_splits(db: Session, user_id: str) -> Dict[str, Any]:
+    """Retrieve user customized 4-day workout splits from DB."""
+    seed_user_exercises_if_needed(db, user_id)
+    user_exercises = db.query(UserExercise).filter(
+        UserExercise.user_id == user_id
+    ).order_by(UserExercise.order_num.asc()).all()
+
+    splits = {}
+    for split_id, split_meta in WORKOUT_SPLITS.items():
+        splits[split_id] = {
+            "id": split_id,
+            "name": split_meta["name"],
+            "estimated_burn_kcal": split_meta["estimated_burn_kcal"],
+            "exercises": []
+        }
+
+    for ex in user_exercises:
+        if ex.split_id in splits:
+            splits[ex.split_id]["exercises"].append({
+                "id": ex.id,
+                "name": ex.name,
+                "weight": ex.weight,
+                "target": ex.target
+            })
+
+    return splits
+
+
+def update_exercise_weight(db: Session, user_id: str, exercise_query: str, new_weight: str) -> Optional[UserExercise]:
+    """Search and update exercise weight by exercise name (case-insensitive substring match)."""
+    seed_user_exercises_if_needed(db, user_id)
+    exercises = db.query(UserExercise).filter(UserExercise.user_id == user_id).all()
+    q = exercise_query.strip().lower()
+
+    # Find matching exercise
+    match = None
+    for ex in exercises:
+        if q in ex.name.lower():
+            match = ex
+            break
+
+    if match:
+        match.weight = new_weight.strip()
+        db.commit()
+        db.refresh(match)
+        return match
+    return None
 
 
 def calculate_bmr(gender: str, weight_kg: float, height_cm: float, age: int) -> float:
