@@ -76,6 +76,36 @@ def update_exercise_weight(db: Session, user_id: str, exercise_query: str, new_w
     return None
 
 
+def save_all_user_exercises(db: Session, user_id: str, all_splits_data: Dict[str, List[Dict[str, Any]]]):
+    """Bulk update all exercises and weights for a user across splits."""
+    seed_user_exercises_if_needed(db, user_id)
+    for split_id, exercises in all_splits_data.items():
+        if split_id not in WORKOUT_SPLITS:
+            continue
+        db.query(UserExercise).filter(
+            UserExercise.user_id == user_id,
+            UserExercise.split_id == split_id
+        ).delete()
+
+        for idx, item in enumerate(exercises):
+            name = item.get("name", "").strip()
+            if not name:
+                continue
+            weight = item.get("weight", "ตามระดับ").strip()
+            target = item.get("target", "กล้ามเนื้อ").strip()
+            new_ex = UserExercise(
+                user_id=user_id,
+                split_id=split_id,
+                name=name,
+                weight=weight,
+                target=target,
+                order_num=idx + 1
+            )
+            db.add(new_ex)
+    db.commit()
+
+
+
 def calculate_bmr(gender: str, weight_kg: float, height_cm: float, age: int) -> float:
     """
     Calculate Basal Metabolic Rate (BMR) using Mifflin-St Jeor formula.

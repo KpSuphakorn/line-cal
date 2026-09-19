@@ -81,10 +81,10 @@ def get_line_clients():
     return api_client, messaging_api, blob_api
 
 
-def reply_flex(messaging_api: MessagingApi, reply_token: str, alt_text: str, flex_dict: Dict[str, Any]):
-    """Helper to reply with a LINE Flex Message and floating Quick Reply buttons."""
+def reply_flex(messaging_api: MessagingApi, reply_token: str, alt_text: str, flex_dict: Dict[str, Any], quick_reply: Optional[QuickReply] = None):
+    """Helper to reply with a LINE Flex Message."""
     container = FlexContainer.from_dict(flex_dict)
-    flex_msg = FlexMessage(alt_text=alt_text, contents=container, quick_reply=get_default_quick_reply())
+    flex_msg = FlexMessage(alt_text=alt_text, contents=container, quick_reply=quick_reply)
     messaging_api.reply_message(
         ReplyMessageRequest(
             reply_token=reply_token,
@@ -93,9 +93,9 @@ def reply_flex(messaging_api: MessagingApi, reply_token: str, alt_text: str, fle
     )
 
 
-def reply_text(messaging_api: MessagingApi, reply_token: str, text: str):
-    """Helper to reply with a plain text message and floating Quick Reply buttons."""
-    msg = TextMessage(text=text, quick_reply=get_default_quick_reply())
+def reply_text(messaging_api: MessagingApi, reply_token: str, text: str, quick_reply: Optional[QuickReply] = None):
+    """Helper to reply with a plain text message."""
+    msg = TextMessage(text=text, quick_reply=quick_reply)
     messaging_api.reply_message(
         ReplyMessageRequest(
             reply_token=reply_token,

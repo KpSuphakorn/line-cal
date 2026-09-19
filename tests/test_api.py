@@ -59,3 +59,39 @@ def test_simulate_analyze_food():
     assert "analysis" in data
     assert "calories" in data["analysis"]
     assert "flex_preview" in data
+
+
+def test_workout_editor_web_endpoint():
+    response = client.get("/workout-editor")
+    assert response.status_code == 200
+    assert "Workout Routine" in response.text
+    assert "saveAllRoutines" in response.text
+
+
+def test_user_exercises_api():
+    # 1. Get exercises
+    user_id = "test_user_web_api"
+    response = client.get(f"/api/user/{user_id}/exercises")
+    assert response.status_code == 200
+    data = response.json()
+    assert "day_1" in data
+    assert len(data["day_1"]["exercises"]) > 0
+
+    # 2. Save modified exercises
+    payload = {
+        "day_1": [
+            {"name": "Pec dec fly (custom)", "weight": "45 kg", "target": "อกรวม"},
+            {"name": "Bench press (custom)", "weight": "25 kg", "target": "อกกลาง"}
+        ]
+    }
+    save_res = client.post(f"/api/user/{user_id}/exercises/save", json=payload)
+    assert save_res.status_code == 200
+    assert save_res.json()["status"] == "success"
+
+    # 3. Verify changes persisted
+    verify_res = client.get(f"/api/user/{user_id}/exercises")
+    new_data = verify_res.json()
+    assert len(new_data["day_1"]["exercises"]) == 2
+    assert new_data["day_1"]["exercises"][0]["name"] == "Pec dec fly (custom)"
+    assert new_data["day_1"]["exercises"][0]["weight"] == "45 kg"
+

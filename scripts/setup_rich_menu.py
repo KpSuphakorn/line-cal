@@ -38,7 +38,7 @@ def generate_rich_menu_image() -> bytes:
         # Row 2
         {"title": "🏃 เดินชัน Cardio", "sub": "40 / 50 / 60 นาที", "bg": "#14532D", "border": "#22C55E"},
         {"title": "⚡ Quick Snacks", "sub": "กล้วย นม มัจฉะ ถั่ว", "bg": "#78350F", "border": "#F59E0B"},
-        {"title": "✏️ แก้ไขน้ำหนัก", "sub": "ปรับเปลี่ยนน้ำหนักที่เล่น", "bg": "#334155", "border": "#94A3B8"},
+        {"title": "📱 ปรับแก้ตาราง", "sub": "เปิด Web App แก้ไขน้ำหนัก", "bg": "#1E293B", "border": "#38BDF8"},
     ]
 
     # Try to load a font or fallback to default
@@ -125,10 +125,10 @@ def setup_rich_menu():
             bounds=RichMenuBounds(x=col_w, y=row_h, width=col_w, height=row_h),
             action=MessageAction(text="ของว่าง")
         ),
-        # Tile 6: Edit Weight
+        # Tile 6: Edit Weight Web App
         RichMenuArea(
             bounds=RichMenuBounds(x=col_w * 2, y=row_h, width=width - (col_w * 2), height=row_h),
-            action=MessageAction(text="แก้น้ำหนัก")
+            action=URIAction(uri="https://fbd4-2407-b1c0-dc0-2a87-114e-f325-aad2-bdaf.ngrok-free.app/workout-editor")
         ),
     ]
 

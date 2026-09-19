@@ -2,6 +2,8 @@
 from typing import Dict, Any, List
 from app.data.presets import WORKOUT_SPLITS, CARDIO_PRESETS, QUICK_SNACKS
 
+WORKOUT_EDITOR_URL = "https://fbd4-2407-b1c0-dc0-2a87-114e-f325-aad2-bdaf.ngrok-free.app/workout-editor"
+
 
 def create_food_analyzed_card(food_data: Dict[str, Any], temp_log_id: str) -> Dict[str, Any]:
     """Generate Flex Message card displaying AI food recognition result."""
@@ -501,9 +503,9 @@ def create_workout_splits_carousel(splits_data: Dict[str, Any] = None) -> Dict[s
                         "style": "secondary",
                         "height": "sm",
                         "action": {
-                            "type": "postback",
-                            "label": "✏️ แก้ไขน้ำหนักที่เล่น",
-                            "data": f"action=edit_split_prompt&split_id={split_id}"
+                            "type": "uri",
+                            "label": "📱 ปรับแก้ตารางใน Web App",
+                            "uri": WORKOUT_EDITOR_URL
                         }
                     }
                 ]
@@ -1120,16 +1122,16 @@ def create_main_hub_card() -> Dict[str, Any]:
                 {
                     "type": "box",
                     "layout": "vertical",
-                    "backgroundColor": "#F1F5F9",
+                    "backgroundColor": "#EFF6FF",
                     "cornerRadius": "10px",
                     "paddingAll": "12px",
                     "action": {
-                        "type": "postback",
-                        "label": "แก้ไขน้ำหนักเวท",
-                        "data": "action=view_edit_menu"
+                        "type": "uri",
+                        "label": "เปิด Web App แก้ไขตารางเวท",
+                        "uri": WORKOUT_EDITOR_URL
                     },
                     "contents": [
-                        {"type": "text", "text": "✏️ ปรับแก้ตารางและน้ำหนักที่เล่น (Edit Weights)", "size": "xs", "weight": "bold", "color": "#334155", "align": "center"}
+                        {"type": "text", "text": "📱 เปิด Web App ปรับแก้ตาราง & น้ำหนักเวท", "size": "xs", "weight": "bold", "color": "#1E40AF", "align": "center"}
                     ]
                 }
             ]
@@ -1189,8 +1191,20 @@ def create_edit_split_prompt_card(split: Dict[str, Any]) -> Dict[str, Any]:
         "footer": {
             "type": "box",
             "layout": "vertical",
+            "spacing": "xs",
             "paddingAll": "10px",
             "contents": [
+                {
+                    "type": "button",
+                    "style": "primary",
+                    "color": "#2563EB",
+                    "height": "sm",
+                    "action": {
+                        "type": "uri",
+                        "label": "📱 เปิด Web App ปรับแก้ตาราง",
+                        "uri": WORKOUT_EDITOR_URL
+                    }
+                },
                 {
                     "type": "button",
                     "style": "secondary",
