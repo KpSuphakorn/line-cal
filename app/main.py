@@ -313,7 +313,7 @@ class WorkoutSessionPayload(BaseModel):
 
 
 class CardioPresetPayload(BaseModel):
-    name: str = Field(min_length=1, max_length=100)
+    name: Optional[str] = Field(default=None, min_length=1, max_length=100)
     activity: str = Field(min_length=1, max_length=80)
     custom_name: Optional[str] = Field(default=None, min_length=1, max_length=80)
     duration_min: float = Field(gt=0, le=1440)

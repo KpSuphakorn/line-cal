@@ -96,7 +96,9 @@ def save_cardio_preset(
     preset = _owned_cardio_preset(db, user_id, preset_id) if preset_id is not None else None
     if preset_id is not None and preset is None:
         raise LookupError("Cardio preset not found")
-    name = str(data.get("name") or "Cardio ใหม่").strip()[:100]
+    activity = str(data.get("activity") or "อื่นๆ").strip()[:80]
+    custom_name = str(data.get("custom_name") or "").strip()[:80] or None
+    name = str(data.get("name") or (custom_name if activity == "อื่นๆ" else activity) or "Cardio").strip()[:100]
     if not name:
         raise ValueError("name is required")
     conflict = db.query(CardioPreset).filter(CardioPreset.user_id == user_id, CardioPreset.name == name)
@@ -104,8 +106,6 @@ def save_cardio_preset(
         conflict = conflict.filter(CardioPreset.id != preset.id)
     if conflict.first() is not None:
         raise ValueError("A cardio preset with this name already exists")
-    activity = str(data.get("activity") or "อื่นๆ").strip()[:80]
-    custom_name = str(data.get("custom_name") or "").strip()[:80] or None
     if activity not in CARDIO_ACTIVITIES:
         raise ValueError("activity must be one of the supported cardio activities")
     if activity == "อื่นๆ" and not custom_name:

@@ -615,7 +615,14 @@ def get_history_summary(
     total_in = round(sum(item["calories_in"] for item in daily_data.values()), 1)
     total_burned = round(sum(item["calories_burned"] for item in daily_data.values()), 1)
     active_days = sum(1 for item in daily_data.values() if item["food_logs"] or item["workout_logs"])
-    logged_day_divisor = max(active_days, 1)
+    food_logged_days = sum(1 for item in daily_data.values() if item["food_logs"])
+    workout_logged_days = sum(1 for item in daily_data.values() if item["workout_logs"])
+    food_day_divisor = max(food_logged_days, 1)
+    workout_day_divisor = max(workout_logged_days, 1)
+    peak_day = max(
+        daily_data.values(),
+        key=lambda item: (item["calories_in"], item["date"]),
+    ) if daily_data else None
     years = set()
     for value in db.query(FoodLog.logged_at).filter(FoodLog.user_id == user_id).all():
         years.add(as_bangkok(value[0]).year)
@@ -635,9 +642,16 @@ def get_history_summary(
             "total_food_entries": len(food_logs),
             "total_workout_sessions": len(workout_sessions),
             "active_days": active_days,
-            "average_daily_calories": round(total_in / logged_day_divisor, 1),
-            "average_daily_burned": round(total_burned / logged_day_divisor, 1),
+            "food_logged_days": food_logged_days,
+            "workout_logged_days": workout_logged_days,
+            "average_daily_calories": round(total_in / food_day_divisor, 1),
+            "average_daily_burned": round(total_burned / workout_day_divisor, 1),
             "target_kcal": target_kcal,
+            "peak_day": {
+                "date": peak_day["date"],
+                "date_display": peak_day["date_display"],
+                "calories_in": peak_day["calories_in"],
+            } if peak_day and peak_day["calories_in"] > 0 else None,
         },
         "daily_breakdown": list(daily_data.values()),
     }
