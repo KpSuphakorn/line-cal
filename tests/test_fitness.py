@@ -14,6 +14,7 @@ from app.services.fitness import (
     calculate_incline_walk_burn,
     calculate_tdee,
     get_daily_summary,
+    get_history_summary,
     get_monthly_summary,
     get_or_create_user,
     get_past_food_history,
@@ -219,3 +220,23 @@ def test_profile_update_preserves_manual_targets_without_reset(db_session):
     update_user_profile(db_session, user_id, {"weight_kg": 80, "reset_targets": True})
     reset = db_session.query(User).filter_by(id=user_id).one()
     assert reset.daily_target_kcal != 2000
+
+
+def test_history_summary_uses_bangkok_week_bounds(db_session):
+    user_id = "history-summary"
+    get_or_create_user(db_session, user_id, settings)
+    db_session.add(FoodLog(
+        user_id=user_id,
+        food_name="มื้อทดสอบ",
+        calories=500,
+        protein=30,
+        carbs=50,
+        fat=10,
+        logged_at=datetime(2026, 9, 19, 17, 0, tzinfo=timezone.utc),
+    ))
+    db_session.commit()
+    result = get_history_summary(db_session, user_id, "week", date(2026, 9, 20))
+    assert result["start_date"] == "2026-09-14"
+    assert result["summary"]["total_food_entries"] == 1
+    assert result["summary"]["average_daily_calories"] == 500
+    assert result["daily_breakdown"][-1]["calories_in"] == 500

@@ -1,11 +1,11 @@
 import logging
 from pathlib import Path
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, date
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, Header, HTTPException, Depends, UploadFile, File, Query
 from fastapi.responses import PlainTextResponse, HTMLResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 from linebot.v3 import WebhookParser
 from linebot.v3.exceptions import InvalidSignatureError
 from sqlalchemy.orm import Session
@@ -15,7 +15,7 @@ from app.auth import AuthenticatedUser, get_current_user
 from app.db.database import init_db, get_db
 from app.services.line_handler import handle_line_events
 from app.services.fitness import (
-    get_daily_summary, get_or_create_user, get_monthly_summary, update_food_log, delete_food_log,
+    get_daily_summary, get_or_create_user, get_monthly_summary, get_history_summary, update_food_log, delete_food_log,
     get_user_profile, update_user_profile, is_user_profile_customized
 )
 from app.services.ai_vision import analyze_food_image
@@ -24,12 +24,15 @@ from app.templates.flex_cards import create_food_analyzed_card
 from app.services.workouts import (
     create_cardio_session,
     create_strength_session,
+    delete_cardio_preset,
     delete_program,
     delete_session,
     get_session,
     list_programs,
+    list_cardio_presets,
     list_sessions,
     save_program,
+    save_cardio_preset,
     serialize_session,
     update_session,
 )
@@ -204,6 +207,13 @@ class UserProfilePayload(BaseModel):
     target_fat_g: Optional[float] = Field(default=None, ge=0, le=1000)
     reset_targets: bool = False
 
+    @field_validator("activity_multiplier")
+    @classmethod
+    def validate_activity_multiplier(cls, value):
+        if value is not None and value not in {1.2, 1.375, 1.45, 1.55, 1.725}:
+            raise ValueError("เลือกกิจกรรมจากระดับที่กำหนด")
+        return value
+
 
 # Canonical owner-derived routes. These never accept an owner ID from the browser.
 @app.get("/api/me/today")
@@ -220,6 +230,20 @@ def api_me_monthly(year: int | None = Query(default=None), month: int | None = Q
     if month < 1 or month > 12:
         raise HTTPException(status_code=422, detail="month must be between 1 and 12")
     return get_monthly_summary(db, current_user.subject, year, month)
+
+
+@app.get("/api/me/history")
+def api_me_history(
+    period: str = Query(default="week", pattern="^(week|month)$"),
+    anchor: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+):
+    try:
+        anchor_date = date.fromisoformat(anchor) if anchor else None
+        return get_history_summary(db, current_user.subject, period, anchor_date)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @app.get("/api/me/profile")
@@ -288,14 +312,68 @@ class WorkoutSessionPayload(BaseModel):
     occurred_at: Optional[datetime] = None
 
 
-class CardioPayload(BaseModel):
+class CardioPresetPayload(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
     activity: str = Field(min_length=1, max_length=80)
+    custom_name: Optional[str] = Field(default=None, min_length=1, max_length=80)
     duration_min: float = Field(gt=0, le=1440)
     incline_pct: Optional[float] = Field(default=None, ge=0, le=100)
     speed_kmh: Optional[float] = Field(default=None, ge=0, le=100)
     distance_km: Optional[float] = Field(default=None, ge=0, le=1000)
+
+
+class CardioPayload(BaseModel):
+    activity: Optional[str] = Field(default=None, min_length=1, max_length=80)
+    custom_name: Optional[str] = Field(default=None, min_length=1, max_length=80)
+    duration_min: Optional[float] = Field(default=None, gt=0, le=1440)
+    incline_pct: Optional[float] = Field(default=None, ge=0, le=100)
+    speed_kmh: Optional[float] = Field(default=None, ge=0, le=100)
+    distance_km: Optional[float] = Field(default=None, ge=0, le=1000)
+    preset_id: Optional[int] = Field(default=None, gt=0)
     source_event_id: Optional[str] = Field(default=None, max_length=128)
     occurred_at: Optional[datetime] = None
+
+    @model_validator(mode="after")
+    def require_activity_or_preset(self):
+        if self.preset_id is None and (not self.activity or self.duration_min is None):
+            raise ValueError("activity and duration_min are required without a preset")
+        if self.preset_id is None and self.activity == "อื่นๆ" and not self.custom_name:
+            raise ValueError("custom_name is required for other cardio")
+        return self
+
+
+@app.get("/api/me/cardio-presets")
+def api_me_cardio_presets(db: Session = Depends(get_db), current_user: AuthenticatedUser = Depends(get_current_user)):
+    require_completed_profile(current_user.subject, db)
+    return {"presets": list_cardio_presets(db, current_user.subject)}
+
+
+@app.post("/api/me/cardio-presets")
+def api_me_create_cardio_preset(payload: CardioPresetPayload, db: Session = Depends(get_db), current_user: AuthenticatedUser = Depends(get_current_user)):
+    require_completed_profile(current_user.subject, db)
+    try:
+        return save_cardio_preset(db, current_user.subject, payload.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.put("/api/me/cardio-presets/{preset_id}")
+def api_me_update_cardio_preset(preset_id: int, payload: CardioPresetPayload, db: Session = Depends(get_db), current_user: AuthenticatedUser = Depends(get_current_user)):
+    require_completed_profile(current_user.subject, db)
+    try:
+        return save_cardio_preset(db, current_user.subject, payload.model_dump(), preset_id=preset_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.delete("/api/me/cardio-presets/{preset_id}")
+def api_me_delete_cardio_preset(preset_id: int, db: Session = Depends(get_db), current_user: AuthenticatedUser = Depends(get_current_user)):
+    require_completed_profile(current_user.subject, db)
+    if not delete_cardio_preset(db, current_user.subject, preset_id):
+        raise HTTPException(status_code=404, detail="Cardio preset not found")
+    return {"status": "deleted"}
 
 
 class WorkoutSessionUpdatePayload(BaseModel):
@@ -325,6 +403,8 @@ def api_me_create_cardio_session(payload: CardioPayload, db: Session = Depends(g
     require_completed_profile(current_user.subject, db)
     try:
         session = create_cardio_session(db, current_user.subject, **payload.model_dump(exclude_none=True))
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     except (ValueError, PermissionError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return serialize_session(session)

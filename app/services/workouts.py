@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session, selectinload
 from app.config import settings
 from app.db.models import (
     CardioDetails,
+    CardioPreset,
     ProgramExercise,
     WorkoutProgram,
     WorkoutSession,
@@ -29,6 +30,7 @@ CARDIO_METS = {
     "ว่ายน้ำ": 6.0,
     "อื่นๆ": 5.0,
 }
+CARDIO_ACTIVITIES = ("เดิน", "เดินชัน", "วิ่ง", "จักรยาน", "ว่ายน้ำ", "อื่นๆ")
 
 
 def _number(value: Any, default: float | None = None) -> float | None:
@@ -59,8 +61,87 @@ def serialize_program(program: WorkoutProgram) -> dict[str, Any]:
     }
 
 
+def serialize_cardio_preset(preset: CardioPreset) -> dict[str, Any]:
+    return {
+        "id": preset.id,
+        "name": preset.name,
+        "activity": preset.activity,
+        "custom_name": preset.custom_name,
+        "duration_min": round(preset.duration_min, 1),
+        "incline_pct": preset.incline_pct,
+        "speed_kmh": preset.speed_kmh,
+        "distance_km": preset.distance_km,
+    }
+
+
 def list_programs(db: Session, user_id: str) -> list[dict[str, Any]]:
     return [serialize_program(program) for program in seed_user_programs_if_needed(db, user_id)]
+
+
+def _owned_cardio_preset(db: Session, user_id: str, preset_id: int) -> CardioPreset | None:
+    return db.query(CardioPreset).filter(CardioPreset.id == preset_id, CardioPreset.user_id == user_id).first()
+
+
+def list_cardio_presets(db: Session, user_id: str) -> list[dict[str, Any]]:
+    presets = db.query(CardioPreset).filter(CardioPreset.user_id == user_id).order_by(CardioPreset.name.asc()).all()
+    return [serialize_cardio_preset(preset) for preset in presets]
+
+
+def save_cardio_preset(
+    db: Session,
+    user_id: str,
+    data: dict[str, Any],
+    preset_id: int | None = None,
+) -> dict[str, Any]:
+    preset = _owned_cardio_preset(db, user_id, preset_id) if preset_id is not None else None
+    if preset_id is not None and preset is None:
+        raise LookupError("Cardio preset not found")
+    name = str(data.get("name") or "Cardio ใหม่").strip()[:100]
+    if not name:
+        raise ValueError("name is required")
+    conflict = db.query(CardioPreset).filter(CardioPreset.user_id == user_id, CardioPreset.name == name)
+    if preset is not None:
+        conflict = conflict.filter(CardioPreset.id != preset.id)
+    if conflict.first() is not None:
+        raise ValueError("A cardio preset with this name already exists")
+    activity = str(data.get("activity") or "อื่นๆ").strip()[:80]
+    custom_name = str(data.get("custom_name") or "").strip()[:80] or None
+    if activity not in CARDIO_ACTIVITIES:
+        raise ValueError("activity must be one of the supported cardio activities")
+    if activity == "อื่นๆ" and not custom_name:
+        raise ValueError("custom_name is required for other cardio")
+    if activity != "อื่นๆ" and custom_name:
+        raise ValueError("custom_name is only allowed for other cardio")
+    duration = float(data.get("duration_min") or 0)
+    if duration <= 0 or duration > 1440:
+        raise ValueError("duration_min must be between 0 and 1440")
+    values = {
+        "name": name,
+        "activity": activity,
+        "custom_name": custom_name,
+        "duration_min": duration,
+        "incline_pct": _number(data.get("incline_pct")),
+        "speed_kmh": _number(data.get("speed_kmh")),
+        "distance_km": _number(data.get("distance_km")),
+    }
+    if preset is None:
+        preset = CardioPreset(user_id=user_id, **values)
+        db.add(preset)
+    else:
+        for key, value in values.items():
+            setattr(preset, key, value)
+    db.commit()
+    db.refresh(preset)
+    return serialize_cardio_preset(preset)
+
+
+def delete_cardio_preset(db: Session, user_id: str, preset_id: int) -> bool:
+    preset = _owned_cardio_preset(db, user_id, preset_id)
+    if not preset:
+        return False
+    db.delete(preset)
+    db.commit()
+    return True
 
 
 def _owned_program(db: Session, user_id: str, program_id: int) -> WorkoutProgram | None:
@@ -206,11 +287,13 @@ def create_strength_session(
 def create_cardio_session(
     db: Session,
     user_id: str,
-    activity: str,
-    duration_min: float,
+    activity: str | None = None,
+    duration_min: float | None = None,
     incline_pct: float | None = None,
     speed_kmh: float | None = None,
     distance_km: float | None = None,
+    preset_id: int | None = None,
+    custom_name: str | None = None,
     source_event_id: str | None = None,
     occurred_at: datetime | None = None,
 ) -> WorkoutSession:
@@ -224,8 +307,22 @@ def create_cardio_session(
     user = db.query(User).filter(User.id == user_id).first()
     if not user or not is_user_profile_customized(user):
         raise PermissionError("Complete your profile before logging exercise")
+    preset = _owned_cardio_preset(db, user_id, preset_id) if preset_id is not None else None
+    if preset_id is not None and preset is None:
+        raise LookupError("Cardio preset not found")
+    if preset is not None:
+        activity = activity or preset.activity
+        duration_min = duration_min if duration_min is not None else preset.duration_min
+        incline_pct = incline_pct if incline_pct is not None else preset.incline_pct
+        speed_kmh = speed_kmh if speed_kmh is not None else preset.speed_kmh
+        distance_km = distance_km if distance_km is not None else preset.distance_km
+        custom_name = custom_name or preset.custom_name
     activity = str(activity or "อื่นๆ").strip()[:80]
+    if activity == "อื่นๆ" and custom_name:
+        activity = str(custom_name).strip()[:80]
     met = CARDIO_METS.get(activity, CARDIO_METS["อื่นๆ"])
+    if duration_min is None:
+        raise ValueError("duration_min is required")
     duration_min = float(duration_min)
     if duration_min <= 0:
         raise ValueError("duration_min must be positive")

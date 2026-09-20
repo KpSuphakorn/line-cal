@@ -65,3 +65,10 @@ A calendar day in `Asia/Bangkok`; persisted event times are UTC.
 Supabase/PostgreSQL remains the production database. The relational model fits
 ownership, food/workout history and idempotency constraints; SQLite is a local
 development fallback only.
+
+## Production schema changes
+
+Production startup does not run schema creation or migrations. Before releasing
+features that add tables, run `alembic upgrade head` against the Railway
+`MIGRATION_DATABASE_URL` (or the equivalent Supabase connection URL), verify the
+new revision in `alembic_version`, then deploy the application image.

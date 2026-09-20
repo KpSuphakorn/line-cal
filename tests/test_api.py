@@ -120,6 +120,13 @@ def test_webapp_dashboard_endpoint():
     assert "รักษาน้ำหนัก / ปรับสัดส่วน" in response.text
     assert "iconPaths" in response.text
     assert "calendar-legend" in response.text
+    assert "/api/me/history?period=" in response.text
+    assert "/api/me/cardio-presets" in response.text
+    assert "history-controls" in response.text
+    assert "program-footer" in response.text
+    assert "node('fieldset'" in response.text
+    assert "if(!presetResponse.ok)throw Error" in response.text
+    assert "ลองอีกครั้ง" in response.text
     assert "aria-pressed" in response.text
     assert "aria-current" in response.text
     assert "profile?.profile_completed" in response.text
@@ -337,3 +344,57 @@ def test_monthly_api_rejects_invalid_month(as_user):
     as_user("monthly-validation-owner")
     response = client.get("/api/me/monthly?year=2026&month=13")
     assert response.status_code == 422
+
+
+def test_cardio_presets_are_owned_and_snapshot_sessions(as_user):
+    user_id = "cardio-preset-owner"
+    complete_profile(as_user, user_id)
+    created = client.post("/api/me/cardio-presets", json={
+        "name": "เดินชันหลังเลิกงาน",
+        "activity": "เดินชัน",
+        "duration_min": 30,
+        "incline_pct": 8,
+    })
+    assert created.status_code == 200
+    preset = created.json()
+    assert preset["duration_min"] == 30
+    assert client.post("/api/me/cardio-presets", json={
+        "name": "กิจกรรมมั่ว",
+        "activity": "ลอยตัว",
+        "duration_min": 20,
+    }).status_code == 422
+
+    logged = client.post("/api/me/workout-sessions/cardio", json={"preset_id": preset["id"]})
+    assert logged.status_code == 200
+    assert logged.json()["cardio"]["duration_min"] == 30
+
+    changed = client.put(f"/api/me/cardio-presets/{preset['id']}", json={
+        "name": "เดินชันหลังเลิกงาน",
+        "activity": "เดินชัน",
+        "duration_min": 45,
+        "incline_pct": 10,
+    })
+    assert changed.status_code == 200
+    assert changed.json()["duration_min"] == 45
+    assert client.get(f"/api/me/workout-sessions/{logged.json()['id']}").json()["cardio"]["duration_min"] == 30
+
+    complete_profile(as_user, "cardio-preset-other")
+    assert client.put(f"/api/me/cardio-presets/{preset['id']}", json={
+        "name": "ขโมย",
+        "activity": "วิ่ง",
+        "duration_min": 10,
+    }).status_code == 404
+
+
+def test_history_periods_are_bounded_and_directly_selectable(as_user):
+    user_id = "history-period-owner"
+    complete_profile(as_user, user_id)
+    week = client.get("/api/me/history?period=week&anchor=2026-09-20")
+    assert week.status_code == 200
+    assert week.json()["start_date"] == "2026-09-14"
+    assert len(week.json()["daily_breakdown"]) == 7
+    month = client.get("/api/me/history?period=month&anchor=2026-09-20")
+    assert month.status_code == 200
+    assert month.json()["start_date"] == "2026-09-01"
+    assert month.json()["end_date"] == "2026-09-30"
+    assert len(month.json()["daily_breakdown"]) == 30

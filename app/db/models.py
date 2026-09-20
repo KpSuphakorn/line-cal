@@ -33,6 +33,7 @@ class User(Base):
     food_captures = relationship("FoodCapture", back_populates="user", cascade="all, delete-orphan")
     workout_programs = relationship("WorkoutProgram", back_populates="user", cascade="all, delete-orphan")
     workout_sessions = relationship("WorkoutSession", back_populates="user", cascade="all, delete-orphan")
+    cardio_presets = relationship("CardioPreset", back_populates="user", cascade="all, delete-orphan")
 
 
 class FoodLog(Base):
@@ -193,6 +194,36 @@ class CardioDetails(Base):
     met = Column(Float, nullable=False)
 
     session = relationship("WorkoutSession", back_populates="cardio")
+
+
+class CardioPreset(Base):
+    """A reusable, user-owned cardio configuration.
+
+    Sessions copy these values when created, so editing a preset never changes
+    historical activity records.
+    """
+    __tablename__ = "cardio_presets"
+    __table_args__ = (
+        UniqueConstraint("user_id", "name", name="uq_cardio_preset_user_name"),
+        CheckConstraint("duration_min > 0", name="ck_cardio_preset_duration"),
+        CheckConstraint("incline_pct IS NULL OR incline_pct >= 0", name="ck_cardio_preset_incline"),
+        CheckConstraint("speed_kmh IS NULL OR speed_kmh >= 0", name="ck_cardio_preset_speed"),
+        CheckConstraint("distance_km IS NULL OR distance_km >= 0", name="ck_cardio_preset_distance"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String(64), ForeignKey("users.id"), nullable=False, index=True)
+    name = Column(String(100), nullable=False)
+    activity = Column(String(80), nullable=False)
+    custom_name = Column(String(80), nullable=True)
+    duration_min = Column(Float, nullable=False)
+    incline_pct = Column(Float, nullable=True)
+    speed_kmh = Column(Float, nullable=True)
+    distance_km = Column(Float, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
+
+    user = relationship("User", back_populates="cardio_presets")
 
 
 class FoodCapture(Base):

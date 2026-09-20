@@ -41,7 +41,7 @@ def test_fresh_sqlite_migrations_reach_head(tmp_path):
 
     with sqlite3.connect(database_path) as connection:
         revision = connection.execute("SELECT version_num FROM alembic_version").fetchone()[0]
-        assert revision == "0005_remove_legacy_paths"
+        assert revision == "0006_cardio_presets"
 
         food_columns = {
             row[1]: row[3]
@@ -61,6 +61,7 @@ def test_fresh_sqlite_migrations_reach_head(tmp_path):
             for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")
         }
         assert not {"workout_logs", "user_exercises", "pending_food_analyses"} & tables
+        assert "cardio_presets" in tables
 
 
 def test_migration_url_overrides_runtime_url(tmp_path):

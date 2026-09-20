@@ -502,7 +502,7 @@ def get_monthly_summary(db: Session, user_id: str, year: int, month: int) -> Dic
     total_calories = sum(d["calories_in"] for d in daily_data.values())
     total_protein = sum(d["protein"] for d in daily_data.values())
     protein_days_met = sum(1 for d in daily_data.values() if d["protein_goal_met"])
-    total_workouts = sum(1 for d in daily_data.values() if d["has_workout"])
+    total_workouts = len(workout_sessions)
 
     # Workout type counts
     weights_count = sum(1 for w in workout_sessions if w.session_type == "strength")
@@ -523,6 +523,123 @@ def get_monthly_summary(db: Session, user_id: str, year: int, month: int) -> Dic
         "weights_sessions": weights_count,
         "cardio_sessions": cardio_count,
         "daily_breakdown": list(daily_data.values())
+    }
+
+
+def get_history_summary(
+    db: Session,
+    user_id: str,
+    period: str = "week",
+    anchor: date | None = None,
+) -> Dict[str, Any]:
+    """Return a bounded history summary without loading unrelated sessions."""
+    import calendar
+
+    period = period.lower().strip()
+    anchor = anchor or datetime.now(BANGKOK).date()
+    if period == "month":
+        start_date = date(anchor.year, anchor.month, 1)
+        end_date = date(anchor.year, anchor.month, calendar.monthrange(anchor.year, anchor.month)[1])
+    elif period == "week":
+        start_date = anchor - timedelta(days=anchor.weekday())
+        end_date = start_date + timedelta(days=6)
+    else:
+        raise ValueError("period must be week or month")
+
+    start_dt, _ = bangkok_day_bounds(start_date)
+    _, end_dt = bangkok_day_bounds(end_date)
+    food_logs = db.query(FoodLog).filter(
+        FoodLog.user_id == user_id,
+        FoodLog.logged_at >= start_dt,
+        FoodLog.logged_at <= end_dt,
+    ).order_by(FoodLog.logged_at.asc()).all()
+    workout_sessions = db.query(WorkoutSession).filter(
+        WorkoutSession.user_id == user_id,
+        WorkoutSession.occurred_at >= start_dt,
+        WorkoutSession.occurred_at <= end_dt,
+    ).order_by(WorkoutSession.occurred_at.asc()).all()
+
+    daily_data = {}
+    day_count = (end_date - start_date).days + 1
+    for offset in range(day_count):
+        day = start_date + timedelta(days=offset)
+        daily_data[day.isoformat()] = {
+            "date": day.isoformat(),
+            "date_display": day.strftime("%d/%m"),
+            "calories_in": 0.0,
+            "calories_burned": 0.0,
+            "protein": 0.0,
+            "food_logs": [],
+            "workout_logs": [],
+        }
+
+    for food in food_logs:
+        local_time = as_bangkok(food.logged_at)
+        item = daily_data.get(local_time.date().isoformat())
+        if item is None:
+            continue
+        item["calories_in"] += food.calories or 0
+        item["protein"] += food.protein or 0
+        item["food_logs"].append({
+            "id": food.id,
+            "name": food.food_name,
+            "portion": food.portion,
+            "calories": round(food.calories or 0, 1),
+            "protein": round(food.protein or 0, 1),
+            "time": local_time.strftime("%H:%M"),
+        })
+
+    for session in workout_sessions:
+        local_time = as_bangkok(session.occurred_at)
+        item = daily_data.get(local_time.date().isoformat())
+        if item is None:
+            continue
+        item["calories_burned"] += session.estimated_calories or 0
+        item["workout_logs"].append({
+            "id": session.id,
+            "name": session.name,
+            "type": session.session_type,
+            "occurred_at": session.occurred_at.isoformat() if session.occurred_at else None,
+            "duration": round(session.estimated_duration_min or 0, 1),
+            "burned": round(session.estimated_calories or 0, 1),
+            "time": local_time.strftime("%H:%M"),
+        })
+
+    for item in daily_data.values():
+        item["calories_in"] = round(item["calories_in"], 1)
+        item["calories_burned"] = round(item["calories_burned"], 1)
+        item["protein"] = round(item["protein"], 1)
+
+    user = db.query(User).filter(User.id == user_id).first()
+    target_kcal = float(user.daily_target_kcal) if user and user.daily_target_kcal is not None else 0.0
+    total_in = round(sum(item["calories_in"] for item in daily_data.values()), 1)
+    total_burned = round(sum(item["calories_burned"] for item in daily_data.values()), 1)
+    active_days = sum(1 for item in daily_data.values() if item["food_logs"] or item["workout_logs"])
+    logged_day_divisor = max(active_days, 1)
+    years = set()
+    for value in db.query(FoodLog.logged_at).filter(FoodLog.user_id == user_id).all():
+        years.add(as_bangkok(value[0]).year)
+    for value in db.query(WorkoutSession.occurred_at).filter(WorkoutSession.user_id == user_id).all():
+        years.add(as_bangkok(value[0]).year)
+    if not years:
+        years.add(anchor.year)
+    return {
+        "period": period,
+        "anchor": anchor.isoformat(),
+        "start_date": start_date.isoformat(),
+        "end_date": end_date.isoformat(),
+        "available_years": sorted(years),
+        "summary": {
+            "total_calories_in": total_in,
+            "total_calories_burned": total_burned,
+            "total_food_entries": len(food_logs),
+            "total_workout_sessions": len(workout_sessions),
+            "active_days": active_days,
+            "average_daily_calories": round(total_in / logged_day_divisor, 1),
+            "average_daily_burned": round(total_burned / logged_day_divisor, 1),
+            "target_kcal": target_kcal,
+        },
+        "daily_breakdown": list(daily_data.values()),
     }
 
 
@@ -644,6 +761,8 @@ def update_user_profile(db: Session, user_id: str, data: Dict[str, Any]) -> Dict
         activity_mult = float(raw_activity)
     except (TypeError, ValueError):
         activity_mult = {"sedentary": 1.2, "light": 1.375, "moderate": 1.45, "active": 1.55, "very_active": 1.725}.get(str(raw_activity).lower(), 1.45)
+    if activity_mult not in {1.2, 1.375, 1.45, 1.55, 1.725}:
+        raise ValueError("activity_multiplier must be one of the supported activity levels")
     user.activity_level = str(activity_mult)
     required_profile_fields = ("name", "gender", "age", "height_cm", "weight_kg", "goal", "activity_level")
     if any(getattr(user, field, None) in (None, "") for field in required_profile_fields):
