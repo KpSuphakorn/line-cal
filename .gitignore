@@ -68,3 +68,4 @@ node_modules/
 
 # Local agent handoff/evidence (product documentation lives in docs/)
 agent-runs/
+.agents/
