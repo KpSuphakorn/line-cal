@@ -122,7 +122,8 @@ def test_webapp_dashboard_endpoint():
     assert "calendar-legend" in response.text
     assert "/api/me/history?period=" in response.text
     assert "/api/me/cardio-presets" in response.text
-    assert "todayCardioPresetRow" in response.text
+    assert "เลือกกิจกรรมวันนี้" in response.text
+    assert "todayCardioPresetRow" not in response.text
     assert "body.append(pace)" in response.text
     assert "[activity,custom,duration,incline,speed,distance,pace].forEach" not in response.text
     assert "history-controls" in response.text
@@ -132,7 +133,8 @@ def test_webapp_dashboard_endpoint():
     assert "ลองอีกครั้ง" in response.text
     assert "LINE ยืนยันตัวตนไม่ผ่าน" in response.text
     assert "history-chart" in response.text
-    assert "ดูปฏิทินและรายการรายวัน" in response.text
+    assert "เลือกวันเพื่อดูรายการอาหารและการออกกำลัง" in response.text
+    assert "node('details'" not in response.text
     assert "เพซประมาณ" in response.text
     assert "aria-pressed" in response.text
     assert "aria-current" in response.text
