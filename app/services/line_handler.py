@@ -15,7 +15,9 @@ from linebot.v3.messaging import (
     TextMessage,
     FlexMessage,
     FlexContainer,
-    QuickReply
+    QuickReply,
+    QuickReplyItem,
+    URIAction,
 )
 from linebot.v3.webhooks import (
     MessageEvent,
@@ -33,7 +35,7 @@ from app.services.fitness import (
     get_daily_summary,
     is_user_profile_customized,
 )
-from app.services.workouts import create_strength_session, list_programs
+from app.services.workouts import create_cardio_session, create_strength_session, list_cardio_presets, list_programs
 from app.services.ai_vision import analyze_food_image
 from app.services.ai_chat import parse_food_text
 from app.services.food_capture import create_capture, serialize_capture, confirm_capture, cancel_capture, ai_quota_remaining
@@ -43,8 +45,8 @@ from app.templates.flex_cards import (
     create_workout_splits_carousel,
     create_workout_logged_card,
     create_welcome_guide_card,
-    create_history_card,
     create_profile_onboarding_card,
+    webapp_uri,
 )
 
 logger = logging.getLogger(__name__)
@@ -100,6 +102,20 @@ def reply_text(messaging_api: MessagingApi, reply_token: str, text: str, quick_r
             reply_token=reply_token,
             messages=[msg]
         )
+    )
+
+
+def reply_webapp(messaging_api: MessagingApi, reply_token: str, tab: str, label: str) -> None:
+    """Send one compact LIFF entry point for a page that belongs in the Web App."""
+    uri = webapp_uri(tab)
+    if not uri:
+        reply_text(messaging_api, reply_token, "ยังเปิด Web App ไม่ได้ กรุณาตั้งค่า LIFF_ID ในระบบก่อนครับ")
+        return
+    reply_text(
+        messaging_api,
+        reply_token,
+        "ใช้ปุ่มด้านล่างเพื่อเปิด",
+        quick_reply=QuickReply(items=[QuickReplyItem(action=URIAction(label=label, uri=uri))]),
     )
 
 
@@ -246,13 +262,22 @@ def handle_text_message(event: MessageEvent, user_id: str, messaging_api: Messag
     if text in {"ประวัติ", "history"}:
         if not require_completed_profile(db, user_id, messaging_api, event.reply_token):
             return
-        reply_flex(messaging_api, event.reply_token, "ประวัติของคุณ", create_history_card())
+        reply_webapp(messaging_api, event.reply_token, "history", "เปิดประวัติ")
         return
 
     if text in {"ออกกำลังกาย", "โปรแกรม", "exercise", "workout"}:
         if not require_completed_profile(db, user_id, messaging_api, event.reply_token):
             return
-        reply_flex(messaging_api, event.reply_token, "โปรแกรมออกกำลังกายของคุณ", create_workout_splits_carousel(list_programs(db, user_id), user_id=user_id))
+        reply_flex(
+            messaging_api,
+            event.reply_token,
+            "โปรแกรมออกกำลังกายของคุณ",
+            create_workout_splits_carousel(
+                list_programs(db, user_id),
+                user_id=user_id,
+                cardio_presets=list_cardio_presets(db, user_id),
+            ),
+        )
         return
 
     reply_flex(messaging_api, event.reply_token, "วิธีใช้ LINE Cal", create_welcome_guide_card(user_id))
@@ -297,6 +322,22 @@ def handle_postback_event(event: PostbackEvent, user_id: str, messaging_api: Mes
         card = create_workout_logged_card(session.name, session.estimated_calories)
         reply_flex(messaging_api, event.reply_token, "บันทึกการออกกำลังกายสำเร็จ", card)
 
+    elif action == "log_cardio_preset":
+        if not require_completed_profile(db, user_id, messaging_api, event.reply_token):
+            return
+        try:
+            session = create_cardio_session(
+                db,
+                user_id,
+                preset_id=int(query_params.get("preset_id") or 0),
+                source_event_id=getattr(event, "webhook_event_id", None),
+            )
+        except (LookupError, PermissionError, ValueError):
+            reply_text(messaging_api, event.reply_token, "ไม่พบ Cardio preset นี้ หรือกรุณาตั้งค่าโปรไฟล์ให้ครบก่อนครับ")
+            return
+        card = create_workout_logged_card(session.name, session.estimated_calories)
+        reply_flex(messaging_api, event.reply_token, "บันทึก Cardio สำเร็จ", card)
+
     elif action == "log_cardio":
         reply_text(messaging_api, event.reply_token, "กรุณาเปิดแบบฟอร์ม Cardio ใน Web App แล้วใส่เวลาที่ทำครับ")
 
@@ -306,13 +347,17 @@ def handle_postback_event(event: PostbackEvent, user_id: str, messaging_api: Mes
         reply_flex(messaging_api, event.reply_token, "สรุปยอดวันนี้", card)
 
     elif action == "view_workouts":
-        carousel = create_workout_splits_carousel(list_programs(db, user_id), user_id=user_id)
+        carousel = create_workout_splits_carousel(
+            list_programs(db, user_id),
+            user_id=user_id,
+            cardio_presets=list_cardio_presets(db, user_id),
+        )
         reply_flex(messaging_api, event.reply_token, "โปรแกรมออกกำลังกายของคุณ", carousel)
 
     elif action == "view_history":
         if not require_completed_profile(db, user_id, messaging_api, event.reply_token):
             return
-        reply_flex(messaging_api, event.reply_token, "ประวัติของคุณ", create_history_card())
+        reply_webapp(messaging_api, event.reply_token, "history", "เปิดประวัติ")
 
     elif action in ["view_help", "view_guide", "view_main_menu"]:
         guide_card = create_welcome_guide_card(user_id)

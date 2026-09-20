@@ -101,6 +101,26 @@ def test_workout_splits_carousel_valid():
     assert "action=log_workout&program_id=1" in str(carousel_dict)
 
 
+def test_workout_splits_carousel_includes_owned_cardio_presets():
+    carousel_dict = create_workout_splits_carousel(
+        [],
+        cardio_presets=[
+            {
+                "id": 8,
+                "name": "เดินชันหลังเลิกงาน",
+                "activity": "เดินชัน",
+                "duration_min": 30.0,
+                "incline_pct": 8.0,
+                "speed_kmh": 5.0,
+                "distance_km": None,
+            }
+        ],
+    )
+
+    assert "เดินชันหลังเลิกงาน" in str(carousel_dict)
+    assert "action=log_cardio_preset&preset_id=8" in str(carousel_dict)
+
+
 def test_workout_logged_card_valid():
     card_dict = create_workout_logged_card("Push", 300.0, 1650.0)
     container = FlexContainer.from_dict(card_dict)

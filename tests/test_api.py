@@ -122,6 +122,9 @@ def test_webapp_dashboard_endpoint():
     assert "calendar-legend" in response.text
     assert "/api/me/history?period=" in response.text
     assert "/api/me/cardio-presets" in response.text
+    assert "todayCardioPresetRow" in response.text
+    assert "body.append(pace)" in response.text
+    assert "[activity,custom,duration,incline,speed,distance,pace].forEach" not in response.text
     assert "history-controls" in response.text
     assert "program-footer" in response.text
     assert "node('fieldset'" in response.text

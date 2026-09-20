@@ -120,6 +120,26 @@ def test_greeting_command(mock_get_clients):
     assert "สวัสดีครับ" in call_args.messages[0].text
 
 
+@patch("app.services.line_handler.reply_webapp")
+@patch("app.services.line_handler.require_completed_profile", return_value=True)
+@patch("app.services.line_handler.get_line_clients")
+def test_history_command_uses_single_webapp_entrypoint(mock_get_clients, _profile, mock_reply_webapp):
+    """History is a LIFF page, so chat should not add a redundant Flex card."""
+    mock_get_clients.return_value = (MagicMock(), MagicMock(), MagicMock())
+    db = get_test_db()
+    event = MagicMock(spec=MessageEvent)
+    event.reply_token = "reply_tok_history"
+    event.source = MagicMock()
+    event.source.user_id = "user_history"
+    event.message = MagicMock(spec=TextMessageContent)
+    event.message.text = "ประวัติ"
+
+    handle_line_events([event], db)
+
+    mock_reply_webapp.assert_called_once()
+    assert mock_reply_webapp.call_args.args[2:] == ("history", "เปิดประวัติ")
+
+
 @patch("app.services.line_handler.get_line_clients")
 @patch("app.services.line_handler.reply_messages", side_effect=RuntimeError("LINE unavailable"))
 def test_failed_event_is_not_marked_and_is_propagated(mock_reply, mock_get_clients):

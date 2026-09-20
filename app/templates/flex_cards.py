@@ -85,17 +85,41 @@ def create_daily_dashboard_card(summary: Dict[str, Any], last_food_id: int | Non
     return _bubble(f"📊 สรุปวันนี้ {summary.get('date_display', '')}", rows, footer)
 
 
-def create_workout_splits_carousel(programs: Any = None, user_id: str = "") -> Dict[str, Any]:
-    """Render user-owned programs plus one Cardio entry; no weekday concepts."""
+def create_workout_splits_carousel(
+    programs: Any = None,
+    user_id: str = "",
+    cardio_presets: Any = None,
+) -> Dict[str, Any]:
+    """Render user-owned strength programs and reusable cardio presets."""
     if isinstance(programs, dict):
         programs = list(programs.values())
+    if isinstance(cardio_presets, dict):
+        cardio_presets = list(cardio_presets.values())
     bubbles = []
     for program in programs or []:
         rows = [{"type": "text", "text": f"• {exercise.get('name', '')} — {exercise.get('sets', 0)} เซ็ต × {exercise.get('repetitions', 0)} ครั้ง", "size": "xs", "color": "#334155", "wrap": True} for exercise in (program.get("exercises") or [])[:8]]
         if not rows:
             rows = [{"type": "text", "text": "ยังไม่มีท่าในโปรแกรมนี้", "size": "xs", "color": "#64748B"}]
         bubbles.append(_bubble(program.get("name", "โปรแกรม"), rows, [_button("✅ เล่นโปรแกรมนี้", {"type": "postback", "data": f"action=log_workout&program_id={program.get('id')}"}, "primary"), _button("✏️ แก้ไขใน Web App", {"type": "uri", "uri": webapp_uri("programs")})], "#1E3A8A"))
-    bubbles.append(_bubble("🏃 Cardio", [{"type": "text", "text": "เลือกกิจกรรมและใส่เวลาใน Web App", "size": "sm", "color": "#475569", "wrap": True}], [_button("➕ บันทึก Cardio", {"type": "uri", "uri": webapp_uri("programs", "cardio=1")}, "primary")], "#047857"))
+    for preset in cardio_presets or []:
+        activity = preset.get("custom_name") or preset.get("activity") or "Cardio"
+        details = [f"{preset.get('duration_min', 0)} นาที"]
+        if preset.get("incline_pct") is not None:
+            details.append(f"ชัน {preset['incline_pct']}%")
+        if preset.get("speed_kmh") is not None:
+            details.append(f"{preset['speed_kmh']} กม./ชม.")
+        if preset.get("distance_km") is not None:
+            details.append(f"{preset['distance_km']} กม.")
+        rows = [
+            {"type": "text", "text": activity, "size": "md", "weight": "bold", "color": "#047857", "wrap": True},
+            {"type": "text", "text": " • ".join(details), "size": "sm", "color": "#475569", "wrap": True},
+        ]
+        footer = [_button("✅ บันทึกวันนี้", {"type": "postback", "data": f"action=log_cardio_preset&preset_id={preset.get('id')}"}, "primary")]
+        edit_uri = webapp_uri("programs")
+        if edit_uri:
+            footer.append(_button("✏️ แก้ไขใน Web App", {"type": "uri", "uri": edit_uri}))
+        bubbles.append(_bubble(str(preset.get("name") or activity), rows, footer, "#047857"))
+    bubbles.append(_bubble("🏃 Cardio", [{"type": "text", "text": "สร้าง preset หรือบันทึกกิจกรรมอื่นใน Web App", "size": "sm", "color": "#475569", "wrap": True}], [_button("➕ เพิ่ม Cardio", {"type": "uri", "uri": webapp_uri("programs", "cardio=1")}, "primary")], "#047857"))
     return {"type": "carousel", "contents": bubbles[:12]}
 
 
