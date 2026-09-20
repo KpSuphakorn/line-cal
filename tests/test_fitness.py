@@ -238,5 +238,7 @@ def test_history_summary_uses_bangkok_week_bounds(db_session):
     result = get_history_summary(db_session, user_id, "week", date(2026, 9, 20))
     assert result["start_date"] == "2026-09-14"
     assert result["summary"]["total_food_entries"] == 1
+    assert result["summary"]["food_logged_days"] == 1
     assert result["summary"]["average_daily_calories"] == 500
+    assert result["summary"]["peak_day"]["calories_in"] == 500
     assert result["daily_breakdown"][-1]["calories_in"] == 500
