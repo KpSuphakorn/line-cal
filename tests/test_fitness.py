@@ -24,7 +24,7 @@ from app.services.fitness import (
     update_exercise_weight,
     update_user_profile,
 )
-from app.services.workouts import create_cardio_session, create_strength_session
+from app.services.workouts import create_cardio_session, create_strength_session, save_cardio_preset
 from app.services.workouts import delete_program
 
 
@@ -85,7 +85,12 @@ def test_daily_summary_workflow_after_profile_setup(db_session):
     programs = get_user_programs(db_session, user_id)
     push_id = next(program["id"] for program in programs.values() if program["name"] == "Push")
     create_strength_session(db_session, user_id, push_id)
-    create_cardio_session(db_session, user_id, "เดินชัน", 40)
+    cardio_preset = save_cardio_preset(db_session, user_id, {
+        "name": "เดินชัน",
+        "activity": "เดินชัน",
+        "duration_min": 40,
+    })
+    create_cardio_session(db_session, user_id, preset_id=cardio_preset["id"])
 
     summary = get_daily_summary(db_session, user_id)
     assert summary["target_kcal"] == 2100.0
@@ -105,6 +110,13 @@ def test_daily_summary_workflow_after_profile_setup(db_session):
     history = get_past_food_history(db_session, user_id, limit=5)
     assert len(history) == 2
     assert history[0]["name"] in ["กล้วยหอม 1 ลูก", "ข้าวกะเพราอกไก่"]
+
+
+def test_cardio_session_requires_preset(db_session):
+    user_id = "test_user_cardio_requires_preset"
+    complete_profile(db_session, user_id)
+    with pytest.raises(ValueError, match="preset_id is required"):
+        create_cardio_session(db_session, user_id, preset_id=None)
 
 
 def test_user_programs_are_independent_and_editable(db_session):

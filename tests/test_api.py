@@ -126,6 +126,9 @@ def test_webapp_dashboard_endpoint():
     assert "todayCardioPresetRow" not in response.text
     assert "body.append(pace)" in response.text
     assert "[activity,custom,duration,incline,speed,distance,pace].forEach" not in response.text
+    assert "openCardio(" not in response.text
+    assert "cardio=1" not in response.text
+    assert "บันทึก Cardio" not in response.text
     assert "history-controls" in response.text
     assert "program-footer" in response.text
     assert "node('fieldset'" in response.text
@@ -133,8 +136,9 @@ def test_webapp_dashboard_endpoint():
     assert "ลองอีกครั้ง" in response.text
     assert "LINE ยืนยันตัวตนไม่ผ่าน" in response.text
     assert "history-chart" in response.text
-    assert "เลือกวันเพื่อดูรายการอาหารและการออกกำลัง" in response.text
-    assert "node('details'" not in response.text
+    assert "เลือกวันที่ต้องการดูรายละเอียด" in response.text
+    assert "target-settings" in response.text
+    assert "ปรับเป้าหมายเอง (ไม่จำเป็น)" in response.text
     assert "เพซประมาณ" in response.text
     assert "aria-pressed" in response.text
     assert "aria-current" in response.text
@@ -393,6 +397,16 @@ def test_cardio_presets_are_owned_and_snapshot_sessions(as_user):
         "activity": "วิ่ง",
         "duration_min": 10,
     }).status_code == 404
+
+
+def test_cardio_session_create_requires_preset(as_user):
+    user_id = "cardio-create-requires-preset"
+    complete_profile(as_user, user_id)
+    response = client.post("/api/me/workout-sessions/cardio", json={
+        "activity": "เดิน",
+        "duration_min": 20,
+    })
+    assert response.status_code == 422
 
 
 def test_cardio_preset_name_defaults_to_activity(as_user):

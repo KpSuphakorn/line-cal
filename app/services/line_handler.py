@@ -68,8 +68,8 @@ WELCOME_FEATURES_TEXT = (
     "พิมพ์ 'ออกกำลังกาย' หรือ 'โปรแกรม' เพื่อเลือกโปรแกรมของคุณ\n\n"
     "📊 สรุปยอดบาลานซ์วันนี้:\n"
     "พิมพ์ 'สรุป' เพื่อดูงบแคลอรี่คงเหลือและโปรตีนวันนี้\n\n"
-    "🎯 ข้อมูลส่วนตัว & เป้าหมาย:\n"
-    "เปิด Profile จาก Rich Menu หรือ Web App เพื่อแก้ไขข้อมูลส่วนตัวและเป้าหมาย"
+    "🎯 ข้อมูลส่วนตัวและเป้าหมาย:\n"
+    "เปิดโปรไฟล์จากเมนูหลักหรือเว็บ เพื่อแก้ไขข้อมูลส่วนตัวและเป้าหมาย"
 )
 
 
@@ -109,12 +109,12 @@ def reply_webapp(messaging_api: MessagingApi, reply_token: str, tab: str, label:
     """Send one compact LIFF entry point for a page that belongs in the Web App."""
     uri = webapp_uri(tab)
     if not uri:
-        reply_text(messaging_api, reply_token, "ยังเปิด Web App ไม่ได้ กรุณาตั้งค่า LIFF_ID ในระบบก่อนครับ")
+        reply_text(messaging_api, reply_token, "ยังเปิดเว็บไม่ได้ กรุณาตั้งค่า LIFF_ID ในระบบก่อนครับ")
         return
     reply_text(
         messaging_api,
         reply_token,
-        "ใช้ปุ่มด้านล่างเพื่อเปิด",
+        "กดปุ่มด้านล่างเพื่อเปิด",
         quick_reply=QuickReply(items=[QuickReplyItem(action=URIAction(label=label, uri=uri))]),
     )
 
@@ -188,7 +188,7 @@ def handle_line_events(events: list, db: Session):
                 # 3-step onboarding flow modeled after KinDee:
                 # 1. Intro & Research purpose & Disclaimer
                 # 2. Features overview
-                # 3. Profile onboarding card (canonical Web App Profile tab)
+                # 3. Profile onboarding card (canonical Web App profile tab)
                 intro_msg = TextMessage(text=WELCOME_INTRO_TEXT)
                 features_msg = TextMessage(text=WELCOME_FEATURES_TEXT)
                 onboard_card = create_profile_onboarding_card(user_id)
@@ -333,13 +333,10 @@ def handle_postback_event(event: PostbackEvent, user_id: str, messaging_api: Mes
                 source_event_id=getattr(event, "webhook_event_id", None),
             )
         except (LookupError, PermissionError, ValueError):
-            reply_text(messaging_api, event.reply_token, "ไม่พบ Cardio preset นี้ หรือกรุณาตั้งค่าโปรไฟล์ให้ครบก่อนครับ")
+            reply_text(messaging_api, event.reply_token, "ไม่พบรายการคาร์ดิโอนี้ หรือกรุณาตั้งค่าโปรไฟล์ให้ครบก่อนครับ")
             return
         card = create_workout_logged_card(session.name, session.estimated_calories)
-        reply_flex(messaging_api, event.reply_token, "บันทึก Cardio สำเร็จ", card)
-
-    elif action == "log_cardio":
-        reply_text(messaging_api, event.reply_token, "กรุณาเปิดแบบฟอร์ม Cardio ใน Web App แล้วใส่เวลาที่ทำครับ")
+        reply_flex(messaging_api, event.reply_token, "บันทึกคาร์ดิโอสำเร็จ", card)
 
     elif action == "view_dashboard":
         summary = get_daily_summary(db, user_id)

@@ -5,7 +5,6 @@ from linebot.v3.messaging import FlexContainer
 from app.templates.flex_cards import (
     create_daily_dashboard_card,
     create_food_analyzed_card,
-    create_history_card,
     create_profile_onboarding_card,
     create_profile_summary_card,
     create_text_food_card,
@@ -97,8 +96,9 @@ def test_workout_splits_carousel_valid():
     container = FlexContainer.from_dict(carousel_dict)
     assert container.type == "carousel"
     assert len(carousel_dict["contents"]) == 4
-    assert carousel_dict["contents"][-1]["header"]["contents"][0]["text"] == "🏃 Cardio"
+    assert carousel_dict["contents"][-1]["header"]["contents"][0]["text"] == "คาร์ดิโอ"
     assert "action=log_workout&program_id=1" in str(carousel_dict)
+    assert "cardio=1" not in str(carousel_dict)
 
 
 def test_workout_splits_carousel_includes_owned_cardio_presets():
@@ -119,6 +119,28 @@ def test_workout_splits_carousel_includes_owned_cardio_presets():
 
     assert "เดินชันหลังเลิกงาน" in str(carousel_dict)
     assert "action=log_cardio_preset&preset_id=8" in str(carousel_dict)
+
+
+def test_workout_splits_carousel_reserves_cardio_management_with_many_programs():
+    programs = [{"id": index, "name": f"โปรแกรม {index}", "exercises": []} for index in range(1, 14)]
+    strength_only = create_workout_splits_carousel(programs)
+    assert len(strength_only["contents"]) == 12
+    assert strength_only["contents"][-1]["header"]["contents"][0]["text"] == "คาร์ดิโอ"
+
+    carousel_dict = create_workout_splits_carousel(
+        programs,
+        cardio_presets=[{
+            "id": 99,
+            "name": "เดินชัน",
+            "activity": "เดินชัน",
+            "duration_min": 30,
+        }],
+    )
+
+    contents = carousel_dict["contents"]
+    assert len(contents) == 12
+    assert contents[-1]["header"]["contents"][0]["text"] == "คาร์ดิโอ"
+    assert "action=log_cardio_preset&preset_id=99" in str(carousel_dict)
 
 
 def test_workout_logged_card_valid():
@@ -164,18 +186,10 @@ def test_profile_cards_valid():
     assert "tab=profile" in str(profile)
 
 
-def test_history_card_opens_history_tab():
-    card_dict = create_history_card()
-    container = FlexContainer.from_dict(card_dict)
-    assert container.type == "bubble"
-    action = card_dict["footer"]["contents"][0]["action"]
-    assert "tab=history" in action["uri"]
-
-
 def test_web_actions_use_liff_deep_link_and_preserve_query_values():
-    uri = webapp_uri("today", "capture_token=abc%2F123&cardio=1")
+    uri = webapp_uri("today", "capture_token=abc%2F123")
 
-    assert uri == "https://liff.line.me/mock_liff_id/?tab=today&capture_token=abc%2F123&cardio=1"
+    assert uri == "https://liff.line.me/mock_liff_id/?tab=today&capture_token=abc%2F123"
     assert "user_id" not in uri
 
 

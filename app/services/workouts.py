@@ -287,16 +287,12 @@ def create_strength_session(
 def create_cardio_session(
     db: Session,
     user_id: str,
-    activity: str | None = None,
-    duration_min: float | None = None,
-    incline_pct: float | None = None,
-    speed_kmh: float | None = None,
-    distance_km: float | None = None,
-    preset_id: int | None = None,
-    custom_name: str | None = None,
+    preset_id: int,
     source_event_id: str | None = None,
     occurred_at: datetime | None = None,
 ) -> WorkoutSession:
+    if preset_id is None:
+        raise ValueError("preset_id is required")
     if source_event_id:
         existing = db.query(WorkoutSession).filter(
             WorkoutSession.user_id == user_id,
@@ -307,19 +303,13 @@ def create_cardio_session(
     user = db.query(User).filter(User.id == user_id).first()
     if not user or not is_user_profile_customized(user):
         raise PermissionError("Complete your profile before logging exercise")
-    preset = _owned_cardio_preset(db, user_id, preset_id) if preset_id is not None else None
-    if preset_id is not None and preset is None:
+    preset = _owned_cardio_preset(db, user_id, preset_id)
+    if preset is None:
         raise LookupError("Cardio preset not found")
-    if preset is not None:
-        activity = activity or preset.activity
-        duration_min = duration_min if duration_min is not None else preset.duration_min
-        incline_pct = incline_pct if incline_pct is not None else preset.incline_pct
-        speed_kmh = speed_kmh if speed_kmh is not None else preset.speed_kmh
-        distance_km = distance_km if distance_km is not None else preset.distance_km
-        custom_name = custom_name or preset.custom_name
-    activity = str(activity or "อื่นๆ").strip()[:80]
-    if activity == "อื่นๆ" and custom_name:
-        activity = str(custom_name).strip()[:80]
+    activity = str(preset.activity or "อื่นๆ").strip()[:80]
+    if activity == "อื่นๆ" and preset.custom_name:
+        activity = str(preset.custom_name).strip()[:80]
+    duration_min = preset.duration_min
     met = CARDIO_METS.get(activity, CARDIO_METS["อื่นๆ"])
     if duration_min is None:
         raise ValueError("duration_min is required")
@@ -339,9 +329,9 @@ def create_cardio_session(
         cardio=CardioDetails(
             activity=activity,
             duration_min=duration_min,
-            incline_pct=incline_pct,
-            speed_kmh=speed_kmh,
-            distance_km=distance_km,
+            incline_pct=preset.incline_pct,
+            speed_kmh=preset.speed_kmh,
+            distance_km=preset.distance_km,
             met=met,
         ),
     )

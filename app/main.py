@@ -5,7 +5,7 @@ from datetime import datetime, date
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, Header, HTTPException, Depends, UploadFile, File, Query
 from fastapi.responses import PlainTextResponse, HTMLResponse
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator
 from linebot.v3 import WebhookParser
 from linebot.v3.exceptions import InvalidSignatureError
 from sqlalchemy.orm import Session
@@ -323,23 +323,18 @@ class CardioPresetPayload(BaseModel):
 
 
 class CardioPayload(BaseModel):
+    preset_id: int = Field(gt=0)
+    source_event_id: Optional[str] = Field(default=None, max_length=128)
+    occurred_at: Optional[datetime] = None
+
+
+class CardioSessionUpdatePayload(BaseModel):
     activity: Optional[str] = Field(default=None, min_length=1, max_length=80)
     custom_name: Optional[str] = Field(default=None, min_length=1, max_length=80)
     duration_min: Optional[float] = Field(default=None, gt=0, le=1440)
     incline_pct: Optional[float] = Field(default=None, ge=0, le=100)
     speed_kmh: Optional[float] = Field(default=None, ge=0, le=100)
     distance_km: Optional[float] = Field(default=None, ge=0, le=1000)
-    preset_id: Optional[int] = Field(default=None, gt=0)
-    source_event_id: Optional[str] = Field(default=None, max_length=128)
-    occurred_at: Optional[datetime] = None
-
-    @model_validator(mode="after")
-    def require_activity_or_preset(self):
-        if self.preset_id is None and (not self.activity or self.duration_min is None):
-            raise ValueError("activity and duration_min are required without a preset")
-        if self.preset_id is None and self.activity == "อื่นๆ" and not self.custom_name:
-            raise ValueError("custom_name is required for other cardio")
-        return self
 
 
 @app.get("/api/me/cardio-presets")
@@ -383,7 +378,7 @@ class WorkoutSessionUpdatePayload(BaseModel):
     estimated_duration_min: Optional[float] = Field(default=None, ge=0, le=1440)
     estimated_calories: Optional[float] = Field(default=None, ge=0, le=100000)
     exercises: Optional[list[SessionExercisePayload]] = Field(default=None, max_length=100)
-    cardio: Optional[CardioPayload] = None
+    cardio: Optional[CardioSessionUpdatePayload] = None
 
 
 @app.post("/api/me/workout-sessions")

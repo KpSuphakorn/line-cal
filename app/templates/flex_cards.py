@@ -95,14 +95,22 @@ def create_workout_splits_carousel(
         programs = list(programs.values())
     if isinstance(cardio_presets, dict):
         cardio_presets = list(cardio_presets.values())
+    programs = list(programs or [])
+    cardio_presets = list(cardio_presets or [])
+    manage_uri = webapp_uri("programs")
+    max_contents = 12
+    available = max_contents - (1 if manage_uri else 0)
+    # Keep cardio presets visible when the user has many strength programs.
+    selected_presets = cardio_presets[:available]
+    selected_programs = programs[:max(0, available - len(selected_presets))]
     bubbles = []
-    for program in programs or []:
+    for program in selected_programs:
         rows = [{"type": "text", "text": f"• {exercise.get('name', '')} — {exercise.get('sets', 0)} เซ็ต × {exercise.get('repetitions', 0)} ครั้ง", "size": "xs", "color": "#334155", "wrap": True} for exercise in (program.get("exercises") or [])[:8]]
         if not rows:
             rows = [{"type": "text", "text": "ยังไม่มีท่าในโปรแกรมนี้", "size": "xs", "color": "#64748B"}]
-        bubbles.append(_bubble(program.get("name", "โปรแกรม"), rows, [_button("✅ เล่นโปรแกรมนี้", {"type": "postback", "data": f"action=log_workout&program_id={program.get('id')}"}, "primary"), _button("✏️ แก้ไขใน Web App", {"type": "uri", "uri": webapp_uri("programs")})], "#1E3A8A"))
-    for preset in cardio_presets or []:
-        activity = preset.get("custom_name") or preset.get("activity") or "Cardio"
+        bubbles.append(_bubble(program.get("name", "โปรแกรม"), rows, [_button("บันทึกวันนี้", {"type": "postback", "data": f"action=log_workout&program_id={program.get('id')}"}, "primary"), _button("แก้ไขในเว็บ", {"type": "uri", "uri": webapp_uri("programs")})], "#1E3A8A"))
+    for preset in selected_presets:
+        activity = preset.get("custom_name") or preset.get("activity") or "คาร์ดิโอ"
         details = [f"{preset.get('duration_min', 0)} นาที"]
         if preset.get("incline_pct") is not None:
             details.append(f"ชัน {preset['incline_pct']}%")
@@ -114,32 +122,29 @@ def create_workout_splits_carousel(
             {"type": "text", "text": activity, "size": "md", "weight": "bold", "color": "#047857", "wrap": True},
             {"type": "text", "text": " • ".join(details), "size": "sm", "color": "#475569", "wrap": True},
         ]
-        footer = [_button("✅ บันทึกวันนี้", {"type": "postback", "data": f"action=log_cardio_preset&preset_id={preset.get('id')}"}, "primary")]
+        footer = [_button("บันทึกวันนี้", {"type": "postback", "data": f"action=log_cardio_preset&preset_id={preset.get('id')}"}, "primary")]
         edit_uri = webapp_uri("programs")
         if edit_uri:
-            footer.append(_button("✏️ แก้ไขใน Web App", {"type": "uri", "uri": edit_uri}))
+            footer.append(_button("แก้ไขในเว็บ", {"type": "uri", "uri": edit_uri}))
         bubbles.append(_bubble(str(preset.get("name") or activity), rows, footer, "#047857"))
-    bubbles.append(_bubble("🏃 Cardio", [{"type": "text", "text": "สร้าง preset หรือบันทึกกิจกรรมอื่นใน Web App", "size": "sm", "color": "#475569", "wrap": True}], [_button("➕ เพิ่ม Cardio", {"type": "uri", "uri": webapp_uri("programs", "cardio=1")}, "primary")], "#047857"))
+    if manage_uri:
+        bubbles.append(_bubble("คาร์ดิโอ", [{"type": "text", "text": "สร้าง แก้ไข หรือลบรายการคาร์ดิโอของคุณ", "size": "sm", "color": "#475569", "wrap": True}], [_button("จัดการรายการคาร์ดิโอ", {"type": "uri", "uri": manage_uri}, "primary")], "#047857"))
     return {"type": "carousel", "contents": bubbles[:12]}
 
 
 def create_workout_logged_card(title: str, burned_kcal: float, remaining_kcal: float = 0) -> Dict[str, Any]:
-    return _bubble("✅ บันทึก Workout Session แล้ว", [{"type": "text", "text": title, "size": "lg", "weight": "bold", "color": "#1E3A8A"}, {"type": "text", "text": f"พลังงานโดยประมาณ {int(burned_kcal)} kcal", "size": "sm", "color": "#166534"}], [_button("📊 ดูสรุปวันนี้", {"type": "postback", "data": "action=view_dashboard"})], "#059669")
+    return _bubble("บันทึกการออกกำลังกายแล้ว", [{"type": "text", "text": title, "size": "lg", "weight": "bold", "color": "#1E3A8A"}, {"type": "text", "text": f"พลังงานโดยประมาณ {int(burned_kcal)} kcal", "size": "sm", "color": "#166534"}], [_button("ดูสรุปวันนี้", {"type": "postback", "data": "action=view_dashboard"})], "#059669")
 
 
 def create_welcome_guide_card(user_id: str = "") -> Dict[str, Any]:
-    rows = [{"type": "text", "text": "ส่งรูปอาหาร หรือพิมพ์ กิน <รายการอาหาร>", "size": "sm", "color": "#334155", "wrap": True}, {"type": "text", "text": "พิมพ์ สรุป เพื่อดูข้อมูลวันนี้", "size": "sm", "color": "#334155"}, {"type": "text", "text": "พิมพ์ ออกกำลังกาย หรือ โปรแกรม เพื่อเลือกโปรแกรม/คาร์ดิโอ", "size": "sm", "color": "#334155", "wrap": True}, {"type": "text", "text": "พิมพ์ ประวัติ เพื่อเปิดประวัติใน Web App", "size": "sm", "color": "#334155"}]
+    rows = [{"type": "text", "text": "ส่งรูปอาหาร หรือพิมพ์ กิน <รายการอาหาร>", "size": "sm", "color": "#334155", "wrap": True}, {"type": "text", "text": "พิมพ์ สรุป เพื่อดูข้อมูลวันนี้", "size": "sm", "color": "#334155"}, {"type": "text", "text": "พิมพ์ ออกกำลังกาย หรือ โปรแกรม เพื่อเลือกโปรแกรมและคาร์ดิโอ", "size": "sm", "color": "#334155", "wrap": True}, {"type": "text", "text": "พิมพ์ ประวัติ เพื่อเปิดประวัติในเว็บ", "size": "sm", "color": "#334155"}]
     footer = [_button("📊 วันนี้", {"type": "postback", "data": "action=view_dashboard"}), _button("🏋️ ออกกำลังกาย", {"type": "postback", "data": "action=view_workouts"}), _button("📖 ประวัติ", {"type": "postback", "data": "action=view_history"})]
     return _bubble("วิธีใช้ LINE Cal", rows, footer)
 
 
-def create_history_card() -> Dict[str, Any]:
-    return _bubble("📖 ประวัติ", [{"type": "text", "text": "ดูปฏิทิน รายการอาหาร และ Workout Sessions ที่แก้ไขย้อนหลังได้ใน Web App", "size": "sm", "color": "#334155", "wrap": True}], [_button("เปิดประวัติ", {"type": "uri", "uri": webapp_uri("history")}, "primary")])
-
-
 def create_profile_onboarding_card(user_id: str = "") -> Dict[str, Any]:
-    return _bubble("ตั้งค่า Profile ก่อนเริ่มใช้งาน", [{"type": "text", "text": "กรอกชื่อ อายุ เพศ ส่วนสูง น้ำหนัก เป้าหมาย และระดับกิจกรรม เพื่อคำนวณเป้าหมายส่วนตัว", "size": "sm", "color": "#334155", "wrap": True}], [_button("เปิด Profile", {"type": "uri", "uri": webapp_uri("profile")}, "primary")], "#7C2D12")
+    return _bubble("ตั้งค่าโปรไฟล์ก่อนเริ่มใช้งาน", [{"type": "text", "text": "กรอกชื่อ อายุ เพศ ส่วนสูง น้ำหนัก เป้าหมาย และระดับกิจกรรม เพื่อคำนวณเป้าหมายส่วนตัว", "size": "sm", "color": "#334155", "wrap": True}], [_button("เปิดโปรไฟล์", {"type": "uri", "uri": webapp_uri("profile")}, "primary")], "#7C2D12")
 
 
 def create_profile_summary_card(profile: Dict[str, Any], user_id: str = "") -> Dict[str, Any]:
-    return _bubble("👤 Profile", [{"type": "text", "text": str(profile.get("name") or "ผู้ใช้งาน"), "size": "lg", "weight": "bold", "color": "#1E293B"}, {"type": "text", "text": f"เป้าอาหาร {int(profile.get('daily_target_kcal') or 0)} kcal • โปรตีน {int(profile.get('target_protein_g') or 0)}g", "size": "sm", "color": "#475569"}], [_button("แก้ไข Profile", {"type": "uri", "uri": webapp_uri("profile")}, "primary")])
+    return _bubble("โปรไฟล์", [{"type": "text", "text": str(profile.get("name") or "ผู้ใช้งาน"), "size": "lg", "weight": "bold", "color": "#1E293B"}, {"type": "text", "text": f"เป้าอาหาร {int(profile.get('daily_target_kcal') or 0)} kcal • โปรตีน {int(profile.get('target_protein_g') or 0)}g", "size": "sm", "color": "#475569"}], [_button("แก้ไขโปรไฟล์", {"type": "uri", "uri": webapp_uri("profile")}, "primary")])

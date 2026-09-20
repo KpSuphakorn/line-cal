@@ -86,10 +86,13 @@ rest. The final calorie estimate remains editable.
 
 ### 4. Cardio
 
-Cardio shares the Exercise entry point but uses a different form. The user
-chooses an activity and supplies duration. Activity-specific optional fields may
-include incline, speed or distance. Calories use the activity MET, body weight
-and entered duration.
+Cardio uses the same reusable-program flow as strength. The user creates a
+cardio preset once, then selects that saved preset from the Exercise entry
+point to record a session. Presets are named after the activity and contain
+only the fields needed for that activity, such as duration, incline and speed
+for incline walking or duration and pace/distance for running. Calories use the
+activity MET, body weight and the preset duration. There is no one-off cardio
+recording form; an existing session can still be edited afterward.
 
 ### 5. Daily balance
 
@@ -110,7 +113,7 @@ as “earned calories” or “you can eat more”.
 | Food image | Create one or more editable food analysis drafts |
 | `กิน <description>` | Enter the same draft flow as a food image |
 | `สรุป` | Show today's food, exercise and net summary |
-| `ออกกำลังกาย` | Show strength programs and Cardio in one card |
+| `ออกกำลังกาย` | Show strength programs and saved cardio presets in one card, with a link to manage cardio presets |
 | `โปรแกรม` | Alias of `ออกกำลังกาย` |
 | `ประวัติ` | Open LIFF History |
 | `วิธีใช้` | Show only the supported commands |
@@ -230,9 +233,9 @@ Replace the current split representation with programs, exercises, session
 snapshots and one-tap completion. Add automatic strength duration/calorie
 estimates.
 
-### Slice 5 — Cardio and daily balance
+### Slice 5 — Cardio presets and daily balance
 
-Add cardio duration capture and activity MET estimates. Present food target,
+Add reusable cardio presets and activity MET estimates. Present food target,
 exercise and net values separately.
 
 ### Slice 6 — Final UI and LINE surfaces
@@ -257,7 +260,8 @@ performed after the feature slices are complete and before production release.
 - Image and `กิน` inputs create the same editable multi-item draft.
 - Confirmed food items and workout sessions can be edited later.
 - Strength logging requires one tap and no timer.
-- Cardio asks for duration.
+- Cardio is recorded by selecting a saved cardio preset; the preset captures the
+  required duration and activity-specific fields.
 - Quick Snacks, general Q&A and direct Day shortcuts no longer exist.
 - LIFF has exactly four bottom destinations and no duplicate navigation.
 - The Rich Menu has the agreed six actions.
