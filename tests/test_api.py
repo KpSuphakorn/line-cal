@@ -113,6 +113,11 @@ def test_webapp_dashboard_endpoint():
     assert "exercise-details" in response.text
     assert "querySelector(`[data-field=\"${key}\"]`)" in response.text
     assert "node('div',message,'toast')" in response.text
+    assert "calorie-ring" in response.text
+    assert "progress-fill" in response.text
+    assert "ออกกำลังกาย (ประมาณ)" in response.text
+    assert "นั่งเป็นส่วนใหญ่" in response.text
+    assert "รักษาน้ำหนัก / ปรับสัดส่วน" in response.text
     assert "class=\"tab-nav\"" not in response.text
     assert "reset_targets" in response.text
     assert "บันทึกเป้าหมาย" in response.text
