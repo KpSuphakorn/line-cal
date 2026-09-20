@@ -1,7 +1,7 @@
 """Gemini Vision AI Engine for Food Calorie and Macro Estimation."""
 import json
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 from io import BytesIO
 from PIL import Image
 
@@ -9,26 +9,12 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """คุณเป็นนักโภชนาการ AI ผู้เชี่ยวชาญด้านอาหารไทยและอาหารสากล จงวิเคราะห์รูปภาพอาหารที่ส่งมาอย่างละเอียดและแม่นยำ:
-1. ระบุชื่ออาหาร (ภาษาไทย)
-2. ประมาณขนาดและส่วนประกอบ (เช่น ข้าวสวย 1.5 ทัพพี, เนื้อสัตว์กี่กรัม, ปรุงด้วยน้ำมันหรือไม่)
-3. ประเมินพลังงานรวม (kcal)
-4. ประเมินสารอาหารหลัก (Macronutrients) เป็นกรัม:
-   - protein (โปรตีน)
-   - carbs (คาร์โบไฮเดรต)
-   - fat (ไขมัน)
-5. ให้ข้อคิดเห็นสั้นๆ เกี่ยวกับเป้าหมายสร้างกล้ามเนื้อและลดพุง (notes)
-
-ตอบกลับเป็น JSON Format เดียวเท่านั้น โดยไม่มี markdown code fence หรือข้อความอื่น:
-{
-  "food_name": "ชื่ออาหารหลัก",
-  "portion": "ปริมาณโดยประมาณ เช่น 1 จาน (ข้าว 150g, ไก่ 120g)",
-  "calories": 550.0,
-  "protein": 28.0,
-  "carbs": 62.0,
-  "fat": 16.0,
-  "notes": "คำแนะนำสั้นๆ เกี่ยวกับสารอาหาร"
-}
+SYSTEM_PROMPT = """คุณเป็นนักโภชนาการ AI ผู้เชี่ยวชาญด้านอาหารไทยและอาหารสากล
+วิเคราะห์อาหารทุกอย่างที่เห็นในรูปเป็นรายการอิสระ แยกข้าว เนื้อ ไข่ เครื่องดื่ม
+หรือของเคียงเมื่อแยกได้ ให้ประมาณชื่อ ปริมาณ kcal และสารอาหารเป็นกรัม
+(protein, carbs, fat) พร้อม confidence 0 ถึง 1 และ notes สั้นๆ
+ตอบ JSON เท่านั้น ไม่มี markdown:
+{"items":[{"food_name":"ชื่ออาหาร","portion":"ปริมาณโดยประมาณ","calories":0.0,"protein":0.0,"carbs":0.0,"fat":0.0,"confidence":0.0,"notes":""}]}
 """
 
 
@@ -39,26 +25,37 @@ def analyze_food_image(image_bytes: bytes) -> Dict[str, Any]:
     """
     if not settings.GEMINI_API_KEY or "mock" in settings.GEMINI_API_KEY:
         logger.warning("Using mock Gemini Vision response (GEMINI_API_KEY is not set).")
-        return {
-            "food_name": "ข้าวกะเพราอกไก่ไข่ดาว",
-            "portion": "1 จาน (ข้าวสวย 150g, อกไก่ 120g, ไข่ดาว 1 ฟอง)",
-            "calories": 520.0,
-            "protein": 34.0,
-            "carbs": 58.0,
-            "fat": 14.0,
-            "notes": "โปรตีนสูง เหมาะกับช่วงสร้างกล้ามเนื้อ หากลดน้ำมันทอดไข่ดาวจะลีนขึ้นอีก"
-        }
+        return {"items": [{
+            "food_name": "ข้าวกะเพราอกไก่",
+            "portion": "1 จาน",
+            "calories": 450.0,
+            "protein": 30.0,
+            "carbs": 55.0,
+            "fat": 12.0,
+            "confidence": 0.65,
+            "notes": "ค่าประมาณ แก้ไขได้ก่อนยืนยัน"
+        }, {
+            "food_name": "ไข่ดาว",
+            "portion": "1 ฟอง",
+            "calories": 120.0,
+            "protein": 7.0,
+            "carbs": 1.0,
+            "fat": 10.0,
+            "confidence": 0.55,
+            "notes": "ค่าประมาณ แก้ไขได้ก่อนยืนยัน"
+        }]}
 
     try:
         import google.generativeai as genai
         genai.configure(api_key=settings.GEMINI_API_KEY)
 
-        # Use latest active gemini model: gemini-3.6-flash
-        model_name = "gemini-3.6-flash"
+        # Use standard production gemini model: gemini-flash-latest (1,500 RPD free tier)
+        model_name = "gemini-flash-latest"
         try:
             model = genai.GenerativeModel(model_name)
         except Exception:
-            model = genai.GenerativeModel("gemini-flash-latest")
+            model = genai.GenerativeModel("gemini-1.5-flash")
+
 
         image = Image.open(BytesIO(image_bytes))
 
@@ -83,24 +80,16 @@ def analyze_food_image(image_bytes: bytes) -> Dict[str, Any]:
             content_text = content_text[:-3]
 
         data = json.loads(content_text.strip())
-        return {
-            "food_name": str(data.get("food_name", "อาหารที่ตรวจพบ")),
-            "portion": str(data.get("portion", "1 ที่")),
-            "calories": float(data.get("calories", 400.0)),
-            "protein": float(data.get("protein", 20.0)),
-            "carbs": float(data.get("carbs", 45.0)),
-            "fat": float(data.get("fat", 10.0)),
-            "notes": str(data.get("notes", "บันทึกเรียบร้อย"))
-        }
+        return data if isinstance(data.get("items"), list) else {"items": [data]}
 
     except Exception as e:
         logger.error(f"Error calling Gemini Vision: {e}")
-        return {
+        return {"items": [{
             "food_name": "อาหาร (ประมาณการทั่วไป)",
             "portion": "1 จานมาตรฐาน",
             "calories": 500.0,
             "protein": 25.0,
             "carbs": 60.0,
             "fat": 15.0,
-            "notes": f"เกิดข้อผิดพลาดในการวิเคราะห์ AI: {str(e)[:50]}"
-        }
+            "notes": "AI ขัดข้องชั่วคราว ค่าประมาณนี้แก้ไขได้ก่อนยืนยัน"
+        }]}

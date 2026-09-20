@@ -29,19 +29,42 @@ env/
 
 # Environment Variables & Secrets (CRITICAL)
 .env
-.env.local
+.env.*
+!.env.example
 
 # SQLite Database
 *.db
+*.db-*
+*.sqlite
+*.sqlite-*
 *.sqlite3
 
 # Testing & Cache
 .pytest_cache/
 .coverage
+.coverage.*
+coverage.xml
 htmlcov/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+.tox/
+.nox/
 
 # IDE / OS
 .DS_Store
+Thumbs.db
 .idea/
 .vscode/
 *.swp
+
+# Local runtime output
+*.log
+logs/
+tmp/
+.tmp/
+node_modules/
+.supabase/
+
+# Local agent handoff/evidence (product documentation lives in docs/)
+agent-runs/

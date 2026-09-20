@@ -26,4 +26,5 @@ COPY . .
 EXPOSE 8000
 
 # Run FastAPI app with Uvicorn
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Railway injects PORT at runtime; keep 8000 as the local/Docker default.
+CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]

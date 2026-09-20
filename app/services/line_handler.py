@@ -1,7 +1,8 @@
 """LINE Messaging API Event Handler & Dispatcher."""
-import uuid
 import urllib.parse
 import logging
+import hashlib
+import json
 from typing import Dict, Any, Optional
 
 from linebot.v3 import WebhookParser
@@ -14,62 +15,60 @@ from linebot.v3.messaging import (
     TextMessage,
     FlexMessage,
     FlexContainer,
-    QuickReply,
-    QuickReplyItem,
-    MessageAction,
-    PostbackAction
+    QuickReply
 )
 from linebot.v3.webhooks import (
     MessageEvent,
     TextMessageContent,
     ImageMessageContent,
-    PostbackEvent
+    PostbackEvent,
+    FollowEvent
 )
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.db.models import FoodLog, WorkoutLog
+from app.db.models import ProcessedWebhook
 from app.services.fitness import (
     get_or_create_user,
     get_daily_summary,
-    get_weekly_stats,
-    get_past_food_history,
-    get_user_splits,
-    update_exercise_weight,
-    calculate_incline_walk_burn
+    is_user_profile_customized,
 )
+from app.services.workouts import create_strength_session, list_programs
 from app.services.ai_vision import analyze_food_image
-from app.data.presets import WORKOUT_SPLITS, QUICK_SNACKS
+from app.services.ai_chat import parse_food_text
+from app.services.food_capture import create_capture, serialize_capture, confirm_capture, cancel_capture, ai_quota_remaining
 from app.templates.flex_cards import (
     create_food_analyzed_card,
     create_daily_dashboard_card,
     create_workout_splits_carousel,
-    create_quick_snacks_card,
     create_workout_logged_card,
-    create_weekly_stats_card,
-    create_food_history_card,
-    create_main_hub_card,
-    create_edit_split_prompt_card,
-    create_weight_updated_card
+    create_welcome_guide_card,
+    create_history_card,
+    create_profile_onboarding_card,
 )
 
 logger = logging.getLogger(__name__)
 
-# Temporary cache for food scans awaiting user confirmation: temp_id -> food_data
-PENDING_FOOD_SCANS: Dict[str, Dict[str, Any]] = {}
+WELCOME_INTRO_TEXT = (
+    "💙 สวัสดี! เราชื่อ LINE Cal ผู้ช่วยบันทึกข้อมูลอาหารและคำนวณแคลอรี่อัจฉริยะของคุณ\n\n"
+    "🔬 การใช้งาน LINE Cal นี้เป็นส่วนหนึ่งของการวิจัยและพัฒนาเทคโนโลยีปัญญาประดิษฐ์ (AI) ด้านสุขภาพ, อาหารและโภชนาการ\n\n"
+    "🙏 ขอขอบพระคุณที่ร่วมเป็นส่วนหนึ่งในการต่อยอดโปรเจกต์นี้ และหากมีข้อผิดพลาดประการใดขออภัยมา ณ ที่นี้ เราพร้อมที่จะปรับปรุง LINE Cal ให้ดียิ่งขึ้น\n\n"
+    "💬 คำแนะนำรวมถึงข้อมูลจาก LINE Cal เป็นเพียงข้อมูลและการประเมินเบื้องต้นเท่านั้น"
+)
 
-
-def get_default_quick_reply() -> QuickReply:
-    """Always attach floating quick-action buttons above the user's keyboard."""
-    return QuickReply(items=[
-        QuickReplyItem(action=MessageAction(label="📊 สรุปวันนี้", text="สรุป")),
-        QuickReplyItem(action=MessageAction(label="🏋️ ตารางเวท", text="เวท")),
-        QuickReplyItem(action=MessageAction(label="🏃 เดินชัน 40น.", text="เดินชัน 40")),
-        QuickReplyItem(action=MessageAction(label="🍌 กล้วย", text="กล้วย")),
-        QuickReplyItem(action=MessageAction(label="🍵 มัจฉะ", text="มัจฉะ")),
-        QuickReplyItem(action=MessageAction(label="📈 สถิติ 7 วัน", text="สถิติ")),
-        QuickReplyItem(action=MessageAction(label="✏️ แก้น้ำหนัก", text="แก้น้ำหนัก"))
-    ])
+WELCOME_FEATURES_TEXT = (
+    "💙💙 น้อง LINE Cal ทำอะไรได้บ้าง 💙💙\n\n"
+    "📸 ถ่ายภาพอาหาร:\n"
+    "ส่งภาพอาหารที่คุณทานในแต่ละวัน เพื่อรับข้อมูลโภชนาการ แคลอรี่ โปรตีน คาร์บ ไขมัน แล้วแก้ไขก่อนยืนยันได้\n\n"
+    "🍲 บันทึกอาหารจากการพิมพ์แชท:\n"
+    "พิมพ์ 'กิน' + เว้นวรรค + ชื่อเมนู (เช่น 'กิน ข้าวมันไก่พิเศษ') เพื่อเข้าสู่ flow เดียวกับการถ่ายรูป\n\n"
+    "🏋️ ตารางเวท & คาร์ดิโอ:\n"
+    "พิมพ์ 'ออกกำลังกาย' หรือ 'โปรแกรม' เพื่อเลือกโปรแกรมของคุณ\n\n"
+    "📊 สรุปยอดบาลานซ์วันนี้:\n"
+    "พิมพ์ 'สรุป' เพื่อดูงบแคลอรี่คงเหลือและโปรตีนวันนี้\n\n"
+    "🎯 ข้อมูลส่วนตัว & เป้าหมาย:\n"
+    "เปิด Profile จาก Rich Menu หรือ Web App เพื่อแก้ไขข้อมูลส่วนตัวและเป้าหมาย"
+)
 
 
 def get_line_clients():
@@ -104,6 +103,56 @@ def reply_text(messaging_api: MessagingApi, reply_token: str, text: str, quick_r
     )
 
 
+def reply_messages(messaging_api: MessagingApi, reply_token: str, messages: list):
+    """Helper to reply with multiple messages (up to 5) in a single request."""
+    messaging_api.reply_message(
+        ReplyMessageRequest(
+            reply_token=reply_token,
+            messages=messages
+        )
+    )
+
+
+def require_completed_profile(db: Session, user_id: str, messaging_api: MessagingApi, reply_token: str) -> bool:
+    """Gate all capture/logging actions until the user completes onboarding."""
+    user = get_or_create_user(db, user_id, settings)
+    if is_user_profile_customized(user):
+        return True
+    reply_flex(
+        messaging_api,
+        reply_token,
+        "กรุณาตั้งค่าโปรไฟล์ก่อนเริ่มบันทึก",
+        create_profile_onboarding_card(user_id),
+    )
+    return False
+
+
+def _capture_food(
+    db: Session,
+    user_id: str,
+    source: str,
+    source_message_id: str | None,
+    analyzer,
+    messaging_api: MessagingApi,
+    reply_token: str,
+) -> None:
+    """Shared image/text capture path; only the analyzer differs."""
+    if ai_quota_remaining(db, user_id) <= 0:
+        reply_text(messaging_api, reply_token, "วันนี้ใช้โควต้าวิเคราะห์อาหารครบแล้ว ลองใหม่พรุ่งนี้ได้เลยครับ")
+        return
+    try:
+        result = analyzer()
+        capture = create_capture(db, user_id, source, result.get("items", [result]), source_message_id=source_message_id)
+        if not capture.drafts:
+            reply_text(messaging_api, reply_token, "ยังไม่พบรายการอาหารที่วิเคราะห์ได้ ลองพิมพ์รายละเอียดเองอีกครั้งครับ")
+            return
+        card = create_food_analyzed_card({"items": serialize_capture(capture)["items"]}, capture.token, user_id=user_id)
+        reply_flex(messaging_api, reply_token, "ตรวจสอบรายการอาหารก่อนยืนยัน", card)
+    except Exception as exc:
+        logger.error("Failed to create food capture: %s", exc, exc_info=True)
+        reply_text(messaging_api, reply_token, "ขออภัยครับ ไม่สามารถวิเคราะห์รายการอาหารได้ กรุณาลองใหม่อีกครั้ง")
+
+
 def handle_line_events(events: list, db: Session):
     """Process incoming LINE webhook events."""
     api_client, messaging_api, blob_api = get_line_clients()
@@ -111,9 +160,29 @@ def handle_line_events(events: list, db: Session):
     for event in events:
         try:
             user_id = event.source.user_id
+            event_id = getattr(event, "webhook_event_id", None) or hashlib.sha256(
+                json.dumps(event.to_dict() if hasattr(event, "to_dict") else str(event), sort_keys=True, default=str).encode()
+            ).hexdigest()
+            if db.query(ProcessedWebhook).filter(ProcessedWebhook.event_id == event_id).first():
+                logger.info("Skipping duplicate webhook event %s", event_id)
+                continue
             user = get_or_create_user(db, user_id, settings)
 
-            if isinstance(event, MessageEvent):
+            if isinstance(event, FollowEvent):
+                # 3-step onboarding flow modeled after KinDee:
+                # 1. Intro & Research purpose & Disclaimer
+                # 2. Features overview
+                # 3. Profile onboarding card (canonical Web App Profile tab)
+                intro_msg = TextMessage(text=WELCOME_INTRO_TEXT)
+                features_msg = TextMessage(text=WELCOME_FEATURES_TEXT)
+                onboard_card = create_profile_onboarding_card(user_id)
+                onboard_msg = FlexMessage(
+                    alt_text="กรุณาตั้งค่าข้อมูลร่างกายเพื่อเริ่มใช้งาน LINE Cal",
+                    contents=FlexContainer.from_dict(onboard_card)
+                )
+                reply_messages(messaging_api, event.reply_token, [intro_msg, features_msg, onboard_msg])
+
+            elif isinstance(event, MessageEvent):
                 if isinstance(event.message, ImageMessageContent):
                     handle_image_message(event, user_id, messaging_api, blob_api, db)
                 elif isinstance(event.message, TextMessageContent):
@@ -122,31 +191,28 @@ def handle_line_events(events: list, db: Session):
             elif isinstance(event, PostbackEvent):
                 handle_postback_event(event, user_id, messaging_api, db)
 
+            # Record only after the handler completed.  A failed handler has
+            # no marker and therefore remains eligible for LINE redelivery.
+            db.add(ProcessedWebhook(event_id=event_id, user_id=user_id))
+            db.commit()
+
         except Exception as e:
             logger.error(f"Error handling LINE event: {e}", exc_info=True)
+            db.rollback()
+            raise
 
 
 def handle_image_message(event: MessageEvent, user_id: str, messaging_api: MessagingApi, blob_api: MessagingApiBlob, db: Session):
-    """Download food image, run Gemini AI analysis, and return Flex card."""
+    """Download food image transiently and use the shared capture flow."""
+    if not require_completed_profile(db, user_id, messaging_api, event.reply_token):
+        return
     message_id = event.message.id
 
     try:
         # Download image bytes from LINE
         image_bytes = blob_api.get_message_content(message_id)
 
-        # Call Gemini Multimodal AI
-        food_data = analyze_food_image(image_bytes)
-
-        # Store in pending cache
-        temp_id = str(uuid.uuid4())[:8]
-        PENDING_FOOD_SCANS[temp_id] = {
-            "user_id": user_id,
-            **food_data
-        }
-
-        # Send interactive confirmation card
-        flex_card = create_food_analyzed_card(food_data, temp_id)
-        reply_flex(messaging_api, event.reply_token, f"AI วิเคราะห์: {food_data['food_name']}", flex_card)
+        _capture_food(db, user_id, "image", message_id, lambda: analyze_food_image(image_bytes), messaging_api, event.reply_token)
 
     except Exception as e:
         logger.error(f"Failed to process image: {e}")
@@ -154,141 +220,42 @@ def handle_image_message(event: MessageEvent, user_id: str, messaging_api: Messa
 
 
 def handle_text_message(event: MessageEvent, user_id: str, messaging_api: MessagingApi, db: Session):
-    """Handle text commands and natural language shortcuts."""
-    text = event.message.text.strip().lower()
-
-    # 0. Yesterday's Balance
-    if "เมื่อวาน" in text:
-        from datetime import datetime, timedelta
-        yesterday = datetime.now().date() - timedelta(days=1)
-        summary = get_daily_summary(db, user_id, target_date=yesterday)
-        card = create_daily_dashboard_card(summary)
-        reply_flex(messaging_api, event.reply_token, f"สรุปยอดเมื่อวาน ({summary['date_display']})", card)
+    """Handle the explicit LINE command contract."""
+    raw_text = event.message.text.strip()
+    text = raw_text.lower()
+    if any(k in text for k in ["สวัสดี", "หวัดดี", "hello", "hi"]):
+        reply_text(messaging_api, event.reply_token, "สวัสดีครับ! พิมพ์ 'กิน [ชื่ออาหาร]' หรือ 'วิธีใช้' เพื่อเริ่มใช้งานได้เลยครับ")
         return
 
-    # 0.1 Weekly Stats (สถิติ 7 วัน)
-    if any(k in text for k in ["สถิติ", "week", "สัปดาห์"]):
-        stats = get_weekly_stats(db, user_id, days=7)
-        card = create_weekly_stats_card(stats)
-        reply_flex(messaging_api, event.reply_token, "สถิติภาพรวม 7 วัน", card)
+    if any(k in text for k in ["วิธีใช้", "วิธีใช้งาน", "คู่มือ", "สอน", "help"]):
+        reply_flex(messaging_api, event.reply_token, "คู่มือการใช้งาน LINE Cal", create_welcome_guide_card(user_id))
         return
 
-    # 0.2 Food History
-    if any(k in text for k in ["ประวัติ", "history"]):
-        history = get_past_food_history(db, user_id, limit=8)
-        card = create_food_history_card(history)
-        reply_flex(messaging_api, event.reply_token, "ประวัติรายการอาหารล่าสุด", card)
-        return
-
-    # 0.3 Edit Exercise Weights
-    if any(k in text for k in ["แก้น้ำหนัก", "ปรับน้ำหนัก", "เปลี่ยนน้ำหนัก", "แก้ไขน้ำหนัก"]):
-        cleaned = text.replace("แก้ไขน้ำหนัก", "").replace("ปรับน้ำหนัก", "").replace("เปลี่ยนน้ำหนัก", "").replace("แก้น้ำหนัก", "").strip()
-        tokens = cleaned.split()
-        if len(tokens) >= 2:
-            new_weight = tokens[-1]
-            if not new_weight.endswith("kg") and not new_weight.endswith("กก"):
-                new_weight += " kg"
-            exercise_query = " ".join(tokens[:-1])
-            updated = update_exercise_weight(db, user_id, exercise_query, new_weight)
-            if updated:
-                card = create_weight_updated_card(updated.name, updated.weight)
-                reply_flex(messaging_api, event.reply_token, f"อัปเดตน้ำหนัก {updated.name} แล้ว", card)
-                return
-            else:
-                reply_text(messaging_api, event.reply_token, f"❌ ไม่พบชื่อท่า '{exercise_query}' ในตารางเวทครับ ลองพิมพ์ 'เวท' เพื่อดูชื่อท่าที่ถูกต้องได้เลยครับ")
-                return
-        else:
-            user_splits = get_user_splits(db, user_id)
-            carousel = create_workout_splits_carousel(user_splits)
-            reply_flex(messaging_api, event.reply_token, "แตะปุ่ม '✏️ แก้ไขน้ำหนักที่เล่น' ในการ์ดตารางเวทได้เลยครับ", carousel)
+    if text.startswith("กิน "):
+        if not require_completed_profile(db, user_id, messaging_api, event.reply_token):
             return
-
-    # 1. Daily Dashboard / Balance Summary
-    if any(k in text for k in ["สรุป", "ยอด", "balance", "dashboard", "แคล", "วันนี้"]):
-        summary = get_daily_summary(db, user_id)
-        card = create_daily_dashboard_card(summary)
-        reply_flex(messaging_api, event.reply_token, "สรุปยอดแคลอรีและสารอาหารวันนี้", card)
+        _capture_food(db, user_id, "text", getattr(event.message, "id", None), lambda: parse_food_text(raw_text), messaging_api, event.reply_token)
         return
 
-    # 2. Workout Split Menu
-    if any(k in text for k in ["เวท", "ตาราง", "workout", "ออกกำลังกาย"]):
-        user_splits = get_user_splits(db, user_id)
-        carousel = create_workout_splits_carousel(user_splits)
-        reply_flex(messaging_api, event.reply_token, "ตารางออกกำลังกายประจำสัปดาห์ 4 วัน", carousel)
+    if text in {"สรุป", "summary"}:
+        if not require_completed_profile(db, user_id, messaging_api, event.reply_token):
+            return
+        reply_flex(messaging_api, event.reply_token, "สรุปยอดแคลอรีและสารอาหารวันนี้", create_daily_dashboard_card(get_daily_summary(db, user_id)))
         return
 
-    # 3. Quick Snacks & Drinks Menu
-    if any(k in text for k in ["ขนม", "ของว่าง", "มัจฉะ", "snack"]):
-        card = create_quick_snacks_card()
-        reply_flex(messaging_api, event.reply_token, "เมนูบันทึกของว่าง & มัจฉะทันใจ", card)
+    if text in {"ประวัติ", "history"}:
+        if not require_completed_profile(db, user_id, messaging_api, event.reply_token):
+            return
+        reply_flex(messaging_api, event.reply_token, "ประวัติของคุณ", create_history_card())
         return
 
-    # 4. Direct Shortcuts for Snacks
-    if "กล้วย" in text:
-        log_snack_by_id(db, user_id, "banana")
-        summary = get_daily_summary(db, user_id)
-        reply_text(messaging_api, event.reply_token, f"🍌 บันทึก 'กล้วยหอม 1 ลูก' (+105 kcal) เรียบร้อยครับ! วันนี้เหลือโควตา {int(summary['remaining_kcal'])} kcal")
+    if text in {"ออกกำลังกาย", "โปรแกรม", "exercise", "workout"}:
+        if not require_completed_profile(db, user_id, messaging_api, event.reply_token):
+            return
+        reply_flex(messaging_api, event.reply_token, "โปรแกรมออกกำลังกายของคุณ", create_workout_splits_carousel(list_programs(db, user_id), user_id=user_id))
         return
 
-    if "นม" in text and "มัจฉะ" not in text:
-        log_snack_by_id(db, user_id, "milk")
-        summary = get_daily_summary(db, user_id)
-        reply_text(messaging_api, event.reply_token, f"🥛 บันทึก 'นมจืด 1 กล่อง' (+130 kcal, P:8g) เรียบร้อยครับ! วันนี้เหลือโควตา {int(summary['remaining_kcal'])} kcal")
-        return
-
-    if "มัจฉะมะพร้าว" in text:
-        log_snack_by_id(db, user_id, "matcha_coconut")
-        summary = get_daily_summary(db, user_id)
-        reply_text(messaging_api, event.reply_token, f"🥥 บันทึก 'มัจฉะน้ำมะพร้าว' (+70 kcal) เรียบร้อยครับ! วันนี้เหลือโควตา {int(summary['remaining_kcal'])} kcal")
-        return
-
-    if "มัจฉะ" in text:
-        log_snack_by_id(db, user_id, "matcha_latte_cow")
-        summary = get_daily_summary(db, user_id)
-        reply_text(messaging_api, event.reply_token, f"🍵 บันทึก 'มัจฉะลาเต้นมวัว 0%' (+130 kcal, P:8g) เรียบร้อยครับ! วันนี้เหลือโควตา {int(summary['remaining_kcal'])} kcal")
-        return
-
-    if "ถั่ว" in text:
-        log_snack_by_id(db, user_id, "mixed_nuts")
-        summary = get_daily_summary(db, user_id)
-        reply_text(messaging_api, event.reply_token, f"🥜 บันทึก 'ถั่วรวม 30g' (+175 kcal, ไขมันดี 15g) เรียบร้อยครับ! วันนี้เหลือโควตา {int(summary['remaining_kcal'])} kcal")
-        return
-
-    # 5. Direct Shortcuts for Workouts
-    if "day 1" in text or "push" in text:
-        card = log_workout_by_id(db, user_id, "day_1")
-        reply_flex(messaging_api, event.reply_token, "บันทึก Day 1: Push แล้ว", card)
-        return
-
-    if "day 2" in text or "pull" in text:
-        card = log_workout_by_id(db, user_id, "day_2")
-        reply_flex(messaging_api, event.reply_token, "บันทึก Day 2: Pull แล้ว", card)
-        return
-
-    if "day 3" in text or "lower" in text or "ขา" in text:
-        card = log_workout_by_id(db, user_id, "day_3")
-        reply_flex(messaging_api, event.reply_token, "บันทึก Day 3: Lower & Core แล้ว", card)
-        return
-
-    if "day 4" in text or "upper" in text:
-        card = log_workout_by_id(db, user_id, "day_4")
-        reply_flex(messaging_api, event.reply_token, "บันทึก Day 4: Upper แล้ว", card)
-        return
-
-    if "เดินชัน" in text:
-        duration = 40
-        if "50" in text:
-            duration = 50
-        elif "60" in text:
-            duration = 60
-        burn = calculate_incline_walk_burn(72.0, duration)
-        card = log_cardio_entry(db, user_id, duration, burn)
-        reply_flex(messaging_api, event.reply_token, f"บันทึกเดินชัน {duration} นาที", card)
-        return
-
-    # 6. Default Fallback: Send Interactive Visual Main Hub!
-    main_hub = create_main_hub_card()
-    reply_flex(messaging_api, event.reply_token, "ศูนย์รวมคำสั่งใช้งาน (Main Menu)", main_hub)
+    reply_flex(messaging_api, event.reply_token, "วิธีใช้ LINE Cal", create_welcome_guide_card(user_id))
 
 
 def handle_postback_event(event: PostbackEvent, user_id: str, messaging_api: MessagingApi, db: Session):
@@ -296,52 +263,42 @@ def handle_postback_event(event: PostbackEvent, user_id: str, messaging_api: Mes
     query_params = dict(urllib.parse.parse_qsl(event.postback.data))
     action = query_params.get("action")
 
-    if action == "confirm_food":
-        temp_id = query_params.get("temp_id")
-        food_data = PENDING_FOOD_SCANS.pop(temp_id, None)
-
-        if not food_data:
+    if action == "confirm_food_capture":
+        if not require_completed_profile(db, user_id, messaging_api, event.reply_token):
+            return
+        capture_token = query_params.get("capture_token")
+        logs = confirm_capture(db, user_id, capture_token or "")
+        if not logs:
             reply_text(messaging_api, event.reply_token, "รายการนี้หมดอายุหรือถูกบันทึกไปแล้วครับ")
             return
-
-        new_food = FoodLog(
-            user_id=user_id,
-            meal_type="meal",
-            food_name=food_data["food_name"],
-            portion=food_data["portion"],
-            calories=food_data["calories"],
-            protein=food_data["protein"],
-            carbs=food_data["carbs"],
-            fat=food_data["fat"]
-        )
-        db.add(new_food)
-        db.commit()
-
         summary = get_daily_summary(db, user_id)
-        card = create_daily_dashboard_card(summary)
-        reply_flex(messaging_api, event.reply_token, f"บันทึก {food_data['food_name']} เรียบร้อย!", card)
+        card = create_daily_dashboard_card(summary, last_food_id=logs[-1].id)
+        reply_flex(messaging_api, event.reply_token, f"บันทึกอาหาร {len(logs)} รายการเรียบร้อย!", card)
 
-    elif action == "cancel":
+    elif action in {"cancel", "cancel_food_capture"}:
+        if query_params.get("capture_token"):
+            cancel_capture(db, user_id, query_params["capture_token"])
         reply_text(messaging_api, event.reply_token, "ยกเลิกการบันทึกรายการอาหารเรียบร้อยครับ")
 
     elif action == "log_workout":
-        split_id = query_params.get("split_id")
-        card = log_workout_by_id(db, user_id, split_id)
+        if not require_completed_profile(db, user_id, messaging_api, event.reply_token):
+            return
+        program_id = query_params.get("program_id") or query_params.get("split_id")
+        try:
+            session = log_program_session(
+                db,
+                user_id,
+                int(program_id),
+                source_event_id=getattr(event, "webhook_event_id", None),
+            )
+        except (LookupError, PermissionError, ValueError):
+            reply_text(messaging_api, event.reply_token, "ไม่พบโปรแกรมนี้ หรือกรุณาตั้งค่าโปรไฟล์ให้ครบก่อนครับ")
+            return
+        card = create_workout_logged_card(session.name, session.estimated_calories)
         reply_flex(messaging_api, event.reply_token, "บันทึกการออกกำลังกายสำเร็จ", card)
 
     elif action == "log_cardio":
-        duration = int(query_params.get("duration", 40))
-        burn = float(query_params.get("burn", 280))
-        card = log_cardio_entry(db, user_id, duration, burn)
-        reply_flex(messaging_api, event.reply_token, f"บันทึกเดินชัน {duration} นาที", card)
-
-    elif action == "quick_snack":
-        snack_id = query_params.get("snack_id")
-        snack = log_snack_by_id(db, user_id, snack_id)
-        if snack:
-            summary = get_daily_summary(db, user_id)
-            card = create_daily_dashboard_card(summary)
-            reply_flex(messaging_api, event.reply_token, f"บันทึก {snack['title']} สำเร็จ", card)
+        reply_text(messaging_api, event.reply_token, "กรุณาเปิดแบบฟอร์ม Cardio ใน Web App แล้วใส่เวลาที่ทำครับ")
 
     elif action == "view_dashboard":
         summary = get_daily_summary(db, user_id)
@@ -349,94 +306,25 @@ def handle_postback_event(event: PostbackEvent, user_id: str, messaging_api: Mes
         reply_flex(messaging_api, event.reply_token, "สรุปยอดวันนี้", card)
 
     elif action == "view_workouts":
-        user_splits = get_user_splits(db, user_id)
-        carousel = create_workout_splits_carousel(user_splits)
-        reply_flex(messaging_api, event.reply_token, "ตารางออกกำลังกาย 4 วัน", carousel)
-
-    elif action == "edit_split_prompt":
-        split_id = query_params.get("split_id", "day_1")
-        user_splits = get_user_splits(db, user_id)
-        split = user_splits.get(split_id, user_splits["day_1"])
-        card = create_edit_split_prompt_card(split)
-        reply_flex(messaging_api, event.reply_token, f"แก้ไขน้ำหนัก {split['name']}", card)
-
-    elif action == "view_edit_menu":
-        user_splits = get_user_splits(db, user_id)
-        carousel = create_workout_splits_carousel(user_splits)
-        reply_flex(messaging_api, event.reply_token, "แตะปุ่ม '✏️ แก้ไขน้ำหนักที่เล่น' ในการ์ดตารางเวทได้เลยครับ", carousel)
-
-    elif action == "view_main_menu":
-        main_hub = create_main_hub_card()
-        reply_flex(messaging_api, event.reply_token, "ศูนย์รวมคำสั่งใช้งาน", main_hub)
-
-    elif action == "view_weekly_stats":
-        stats = get_weekly_stats(db, user_id, days=7)
-        card = create_weekly_stats_card(stats)
-        reply_flex(messaging_api, event.reply_token, "สถิติภาพรวม 7 วัน", card)
+        carousel = create_workout_splits_carousel(list_programs(db, user_id), user_id=user_id)
+        reply_flex(messaging_api, event.reply_token, "โปรแกรมออกกำลังกายของคุณ", carousel)
 
     elif action == "view_history":
-        history = get_past_food_history(db, user_id, limit=8)
-        card = create_food_history_card(history)
-        reply_flex(messaging_api, event.reply_token, "ประวัติรายการอาหารล่าสุด", card)
+        if not require_completed_profile(db, user_id, messaging_api, event.reply_token):
+            return
+        reply_flex(messaging_api, event.reply_token, "ประวัติของคุณ", create_history_card())
 
-    elif action == "view_snacks":
-        card = create_quick_snacks_card()
-        reply_flex(messaging_api, event.reply_token, "Quick Snacks & Drinks", card)
-
-
-def log_snack_by_id(db: Session, user_id: str, snack_id: str) -> Optional[Dict[str, Any]]:
-    """Helper to record a quick snack to database."""
-    snack = next((s for s in QUICK_SNACKS if s["id"] == snack_id), None)
-    if not snack:
-        return None
-
-    new_food = FoodLog(
-        user_id=user_id,
-        meal_type="snack",
-        food_name=snack["title"],
-        portion=snack["subtitle"],
-        calories=snack["calories"],
-        protein=snack["protein"],
-        carbs=snack["carbs"],
-        fat=snack["fat"]
-    )
-    db.add(new_food)
-    db.commit()
-    return snack
+    elif action in ["view_help", "view_guide", "view_main_menu"]:
+        guide_card = create_welcome_guide_card(user_id)
+        reply_flex(messaging_api, event.reply_token, "คู่มือการใช้งาน LINE Cal", guide_card)
 
 
-def log_workout_by_id(db: Session, user_id: str, split_id: str) -> Dict[str, Any]:
-    """Helper to record a 4-day split workout to database."""
-    split = WORKOUT_SPLITS.get(split_id, WORKOUT_SPLITS["day_1"])
-    burn = split["estimated_burn_kcal"]
 
-    new_workout = WorkoutLog(
-        user_id=user_id,
-        workout_type="weights",
-        routine_name=split["name"],
-        duration_min=60,
-        calories_burned=burn,
-        details=", ".join([ex["name"] for ex in split["exercises"]])
-    )
-    db.add(new_workout)
-    db.commit()
-
-    summary = get_daily_summary(db, user_id)
-    return create_workout_logged_card(split["name"], burn, summary["remaining_kcal"])
-
-
-def log_cardio_entry(db: Session, user_id: str, duration_min: int, burn_kcal: float) -> Dict[str, Any]:
-    """Helper to record cardio incline walk to database."""
-    title = f"เดินชัน {duration_min} นาที (Incline 10-12%)"
-    new_workout = WorkoutLog(
-        user_id=user_id,
-        workout_type="cardio",
-        routine_name=title,
-        duration_min=duration_min,
-        calories_burned=burn_kcal
-    )
-    db.add(new_workout)
-    db.commit()
-
-    summary = get_daily_summary(db, user_id)
-    return create_workout_logged_card(title, burn_kcal, summary["remaining_kcal"])
+def log_program_session(
+    db: Session,
+    user_id: str,
+    program_id: int,
+    source_event_id: str | None = None,
+):
+    """One-tap program logging creates an immutable exercise snapshot."""
+    return create_strength_session(db, user_id, program_id, source_event_id=source_event_id)

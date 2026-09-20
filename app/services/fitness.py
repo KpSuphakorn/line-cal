@@ -1,64 +1,144 @@
 """Fitness and Nutrition calculations engine."""
-from datetime import datetime, date, time
-from typing import Dict, Any, List, Optional
+from datetime import datetime, date, time, timezone, timedelta
+from zoneinfo import ZoneInfo
+from typing import Dict, Any, List, Optional, Iterable
 from sqlalchemy.orm import Session
 from sqlalchemy import func
-from app.db.models import User, FoodLog, WorkoutLog, UserExercise
-from app.data.presets import WORKOUT_SPLITS
+from app.db.models import (
+    User,
+    FoodLog,
+    WorkoutSession,
+    ProgramTemplate,
+    TemplateExercise,
+    WorkoutProgram,
+    ProgramExercise,
+)
+from app.data.presets import PROGRAM_TEMPLATES
+from app.config import settings
+
+BANGKOK = ZoneInfo("Asia/Bangkok")
 
 
-def seed_user_exercises_if_needed(db: Session, user_id: str):
-    """Seed user default workout exercises into DB if not already present."""
-    count = db.query(UserExercise).filter(UserExercise.user_id == user_id).count()
-    if count > 0:
-        return
+def estimate_strength_duration_min(exercises: Iterable[Any]) -> float:
+    """Estimate strength time using the agreed defaults, without a timer UI."""
+    exercises = list(exercises or [])
+    seconds = 0
+    for exercise in exercises:
+        sets = max(0, int(getattr(exercise, "sets", 0)))
+        repetitions = max(0, int(getattr(exercise, "repetitions", 0)))
+        seconds += sets * repetitions * 3
+        seconds += max(sets - 1, 0) * 60
+    seconds += max(len(exercises) - 1, 0) * 120
+    return round(seconds / 60.0, 1)
 
-    for split_id, split in WORKOUT_SPLITS.items():
-        for idx, ex in enumerate(split["exercises"]):
-            item = UserExercise(
-                user_id=user_id,
-                split_id=split_id,
-                name=ex["name"],
-                weight=ex["weight"],
-                target=ex["target"],
-                order_num=idx + 1
-            )
-            db.add(item)
+
+def estimate_strength_calories(weight_kg: float | None, duration_min: float, met: float | None = None) -> float:
+    """Conservative session-level estimate; lifted weight is progression data only."""
+    if not weight_kg or duration_min <= 0:
+        return 0.0
+    return round(float(met or getattr(settings, "STRENGTH_MET", 3.5)) * 3.5 * float(weight_kg) / 200.0 * float(duration_min), 1)
+
+
+def bangkok_day_bounds(target_date: date | None = None):
+    """Return UTC-naive bounds for a Bangkok calendar day (SQLite compatible)."""
+    day = target_date or datetime.now(BANGKOK).date()
+    start = datetime.combine(day, time.min, tzinfo=BANGKOK).astimezone(timezone.utc).replace(tzinfo=None)
+    end = datetime.combine(day, time.max, tzinfo=BANGKOK).astimezone(timezone.utc).replace(tzinfo=None)
+    return start, end
+
+
+def as_bangkok(value: datetime | None) -> datetime | None:
+    """Interpret persisted naive values as UTC, then render in Bangkok time."""
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(BANGKOK)
+
+
+def seed_program_templates(db: Session) -> None:
+    """Create the three system templates once; templates are never user-owned."""
+    for template_data in PROGRAM_TEMPLATES:
+        template = db.query(ProgramTemplate).filter(ProgramTemplate.key == template_data["key"]).first()
+        if template is None:
+            template = ProgramTemplate(key=template_data["key"], name=template_data["name"])
+            db.add(template)
+            db.flush()
+            for index, exercise in enumerate(template_data["exercises"], start=1):
+                db.add(TemplateExercise(
+                    template_id=template.id,
+                    name=exercise["name"],
+                    sets=exercise.get("sets", 3),
+                    repetitions=exercise.get("repetitions", 10),
+                    weight=exercise.get("weight"),
+                    notes=exercise.get("notes"),
+                    order_num=index,
+                ))
     db.commit()
 
 
-def get_user_splits(db: Session, user_id: str) -> Dict[str, Any]:
-    """Retrieve user customized 4-day workout splits from DB."""
-    seed_user_exercises_if_needed(db, user_id)
-    user_exercises = db.query(UserExercise).filter(
-        UserExercise.user_id == user_id
-    ).order_by(UserExercise.order_num.asc()).all()
+def seed_user_programs_if_needed(db: Session, user_id: str) -> List[WorkoutProgram]:
+    """Copy Push/Pull/Legs templates for a completed user, idempotently."""
+    existing = db.query(WorkoutProgram).filter(WorkoutProgram.user_id == user_id).all()
+    if existing:
+        return existing
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user or not is_user_profile_customized(user):
+        return []
 
-    splits = {}
-    for split_id, split_meta in WORKOUT_SPLITS.items():
-        splits[split_id] = {
-            "id": split_id,
-            "name": split_meta["name"],
-            "estimated_burn_kcal": split_meta["estimated_burn_kcal"],
-            "exercises": []
+    seed_program_templates(db)
+    templates = db.query(ProgramTemplate).order_by(ProgramTemplate.id.asc()).all()
+    for template in templates:
+        program = WorkoutProgram(
+            user_id=user_id,
+            template_id=template.id,
+            source_key=template.key,
+            name=template.name,
+        )
+        db.add(program)
+        db.flush()
+        for exercise in sorted(template.exercises, key=lambda item: item.order_num):
+            db.add(ProgramExercise(
+                program_id=program.id,
+                name=exercise.name,
+                sets=exercise.sets,
+                repetitions=exercise.repetitions,
+                weight=exercise.weight,
+                notes=exercise.notes,
+                order_num=exercise.order_num,
+            ))
+    db.commit()
+    return db.query(WorkoutProgram).filter(WorkoutProgram.user_id == user_id).all()
+
+
+def get_user_programs(db: Session, user_id: str) -> Dict[str, Any]:
+    """Return only the authenticated user's editable workout programs."""
+    programs = seed_user_programs_if_needed(db, user_id)
+    return {
+        str(program.id): {
+            "id": program.id,
+            "name": program.name,
+            "source_key": program.source_key,
+            "exercises": [
+                {
+                    "id": exercise.id,
+                    "name": exercise.name,
+                    "sets": exercise.sets,
+                    "repetitions": exercise.repetitions,
+                    "weight": exercise.weight,
+                    "notes": exercise.notes or "",
+                }
+                for exercise in program.exercises
+            ],
         }
-
-    for ex in user_exercises:
-        if ex.split_id in splits:
-            splits[ex.split_id]["exercises"].append({
-                "id": ex.id,
-                "name": ex.name,
-                "weight": ex.weight,
-                "target": ex.target
-            })
-
-    return splits
+        for program in programs
+    }
 
 
-def update_exercise_weight(db: Session, user_id: str, exercise_query: str, new_weight: str) -> Optional[UserExercise]:
-    """Search and update exercise weight by exercise name (case-insensitive substring match)."""
-    seed_user_exercises_if_needed(db, user_id)
-    exercises = db.query(UserExercise).filter(UserExercise.user_id == user_id).all()
+def update_exercise_weight(db: Session, user_id: str, exercise_query: str, new_weight: str) -> Optional[Any]:
+    """Update a matching exercise in the user's program."""
+    programs = seed_user_programs_if_needed(db, user_id)
+    exercises = [exercise for program in programs for exercise in program.exercises]
     q = exercise_query.strip().lower()
 
     # Find matching exercise
@@ -69,41 +149,14 @@ def update_exercise_weight(db: Session, user_id: str, exercise_query: str, new_w
             break
 
     if match:
-        match.weight = new_weight.strip()
+        try:
+            match.weight = float(str(new_weight).replace("kg", "").strip())
+        except ValueError:
+            match.notes = new_weight.strip()
         db.commit()
         db.refresh(match)
         return match
     return None
-
-
-def save_all_user_exercises(db: Session, user_id: str, all_splits_data: Dict[str, List[Dict[str, Any]]]):
-    """Bulk update all exercises and weights for a user across splits."""
-    seed_user_exercises_if_needed(db, user_id)
-    for split_id, exercises in all_splits_data.items():
-        if split_id not in WORKOUT_SPLITS:
-            continue
-        db.query(UserExercise).filter(
-            UserExercise.user_id == user_id,
-            UserExercise.split_id == split_id
-        ).delete()
-
-        for idx, item in enumerate(exercises):
-            name = item.get("name", "").strip()
-            if not name:
-                continue
-            weight = item.get("weight", "ตามระดับ").strip()
-            target = item.get("target", "กล้ามเนื้อ").strip()
-            new_ex = UserExercise(
-                user_id=user_id,
-                split_id=split_id,
-                name=name,
-                weight=weight,
-                target=target,
-                order_num=idx + 1
-            )
-            db.add(new_ex)
-    db.commit()
-
 
 
 def calculate_bmr(gender: str, weight_kg: float, height_cm: float, age: int) -> float:
@@ -136,22 +189,30 @@ def calculate_incline_walk_burn(weight_kg: float, duration_min: int, incline_pct
     return round(burn, 1)
 
 
+def is_user_profile_customized(user: User) -> bool:
+    """Check if the user has completed their profile setup."""
+    return bool(
+        user
+        and user.profile_completed
+        and user.name
+        and user.gender
+        and user.age
+        and user.height_cm
+        and user.weight_kg
+        and user.goal
+        and user.activity_level
+    )
+
+
 def get_or_create_user(db: Session, user_id: str, default_settings: Any) -> User:
-    """Ensure user exists with personal default metrics."""
+    """Ensure a neutral, incomplete user exists until onboarding is submitted."""
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         user = User(
             id=user_id,
-            name="Suphakorn",
-            gender=default_settings.USER_DEFAULT_GENDER,
-            age=default_settings.USER_DEFAULT_AGE,
-            height_cm=default_settings.USER_DEFAULT_HEIGHT_CM,
-            weight_kg=default_settings.USER_DEFAULT_WEIGHT_KG,
-            daily_target_kcal=default_settings.USER_DEFAULT_DAILY_TARGET_KCAL,
-            target_protein_g=default_settings.USER_DEFAULT_TARGET_PROTEIN_G,
-            target_carbs_g=default_settings.USER_DEFAULT_TARGET_CARBS_G,
-            target_fat_g=default_settings.USER_DEFAULT_TARGET_FAT_G,
-            goal="recomposition"
+            name="",
+            timezone="Asia/Bangkok",
+            profile_completed=False,
         )
         db.add(user)
         db.commit()
@@ -162,16 +223,15 @@ def get_or_create_user(db: Session, user_id: str, default_settings: Any) -> User
 def get_daily_summary(db: Session, user_id: str, target_date: date = None) -> Dict[str, Any]:
     """Calculate daily calorie intake, expenditure, remaining budget and macro breakdown."""
     if target_date is None:
-        target_date = datetime.now().date()
+        target_date = datetime.now(BANGKOK).date()
 
-    start_dt = datetime.combine(target_date, time.min)
-    end_dt = datetime.combine(target_date, time.max)
+    start_dt, end_dt = bangkok_day_bounds(target_date)
 
     user = db.query(User).filter(User.id == user_id).first()
-    target_kcal = user.daily_target_kcal if user else 1950.0
-    target_protein = user.target_protein_g if user else 145.0
-    target_carbs = user.target_carbs_g if user else 220.0
-    target_fat = user.target_fat_g if user else 55.0
+    target_kcal = (user.daily_target_kcal if user and user.daily_target_kcal is not None else 0.0)
+    target_protein = (user.target_protein_g if user and user.target_protein_g is not None else 0.0)
+    target_carbs = (user.target_carbs_g if user and user.target_carbs_g is not None else 0.0)
+    target_fat = (user.target_fat_g if user and user.target_fat_g is not None else 0.0)
 
     # Get food logs for today
     food_logs = db.query(FoodLog).filter(
@@ -185,27 +245,33 @@ def get_daily_summary(db: Session, user_id: str, target_date: date = None) -> Di
     total_carbs = sum(f.carbs for f in food_logs)
     total_fat = sum(f.fat for f in food_logs)
 
-    # Get workout logs for today
-    workout_logs = db.query(WorkoutLog).filter(
-        WorkoutLog.user_id == user_id,
-        WorkoutLog.logged_at >= start_dt,
-        WorkoutLog.logged_at <= end_dt
+    workout_sessions = db.query(WorkoutSession).filter(
+        WorkoutSession.user_id == user_id,
+        WorkoutSession.occurred_at >= start_dt,
+        WorkoutSession.occurred_at <= end_dt,
     ).all()
 
-    total_calories_burned = sum(w.calories_burned for w in workout_logs)
+    total_calories_burned = sum(w.estimated_calories or 0 for w in workout_sessions)
 
-    # Remaining calorie budget = Target - In + Burned
-    remaining_kcal = round(target_kcal - total_calories_in + total_calories_burned, 1)
+    # Exercise is shown separately; it never increases the food target.
+    remaining_kcal = round(target_kcal - total_calories_in, 1)
+    net_kcal = round(total_calories_in - total_calories_burned, 1)
 
     # Percentage consumed towards base target
     pct_consumed = round((total_calories_in / target_kcal) * 100, 1) if target_kcal > 0 else 0
 
     return {
+        "user_id": user_id,
+        "user_name": user.name if user else "User",
         "date": target_date.strftime("%Y-%m-%d"),
         "date_display": target_date.strftime("%d/%m/%Y"),
         "target_kcal": round(target_kcal, 0),
         "calories_in": round(total_calories_in, 1),
         "calories_burned": round(total_calories_burned, 1),
+        "food_consumed": round(total_calories_in, 1),
+        "food_target": round(target_kcal, 1),
+        "exercise_estimate": round(total_calories_burned, 1),
+        "net": net_kcal,
         "remaining_kcal": remaining_kcal,
         "pct_consumed": pct_consumed,
         "protein": round(total_protein, 1),
@@ -221,35 +287,42 @@ def get_daily_summary(db: Session, user_id: str, target_date: date = None) -> Di
                 "portion": f.portion,
                 "calories": round(f.calories, 1),
                 "protein": round(f.protein, 1),
-                "meal_type": f.meal_type,
-                "time": f.logged_at.strftime("%H:%M")
+                "carbs": round(f.carbs, 1),
+                "fat": round(f.fat, 1),
+                "time": as_bangkok(f.logged_at).strftime("%H:%M")
             }
             for f in food_logs
         ],
-        "workout_logs": [
+        "workout_logs": sorted([
             {
                 "id": w.id,
-                "name": w.routine_name,
-                "duration": w.duration_min,
-                "burned": round(w.calories_burned, 1),
-                "time": w.logged_at.strftime("%H:%M")
+                "name": w.name,
+                "duration": round(w.estimated_duration_min or 0, 1),
+                "burned": round(w.estimated_calories or 0, 1),
+                "time": as_bangkok(w.occurred_at).strftime("%H:%M"),
+                "type": w.session_type,
+                "estimated": bool(w.calories_estimated),
             }
-            for w in workout_logs
-        ]
+            for w in workout_sessions
+        ],
+            key=lambda item: item["time"],
+        )
     }
 
 
 def get_weekly_stats(db: Session, user_id: str, days: int = 7) -> Dict[str, Any]:
     """Calculate 7-day fitness & nutrition performance statistics."""
     from datetime import timedelta
-    today = datetime.now().date()
+    today = datetime.now(BANGKOK).date()
     start_date = today - timedelta(days=days - 1)
-    start_dt = datetime.combine(start_date, time.min)
-    end_dt = datetime.combine(today, time.max)
+    start_dt, _ = bangkok_day_bounds(start_date)
+    _, end_dt = bangkok_day_bounds(today)
 
     user = db.query(User).filter(User.id == user_id).first()
-    target_kcal = user.daily_target_kcal if user else 1950.0
-    target_protein = user.target_protein_g if user else 145.0
+    # New users may exist before onboarding is complete.  Keep monthly history
+    # readable without inventing personal targets or comparing against None.
+    target_kcal = float(user.daily_target_kcal) if user and user.daily_target_kcal is not None else 0.0
+    target_protein = float(user.target_protein_g) if user and user.target_protein_g is not None else 0.0
 
     # Food logs for period
     food_logs = db.query(FoodLog).filter(
@@ -258,21 +331,20 @@ def get_weekly_stats(db: Session, user_id: str, days: int = 7) -> Dict[str, Any]
         FoodLog.logged_at <= end_dt
     ).all()
 
-    # Workout logs for period
-    workout_logs = db.query(WorkoutLog).filter(
-        WorkoutLog.user_id == user_id,
-        WorkoutLog.logged_at >= start_dt,
-        WorkoutLog.logged_at <= end_dt
+    workout_sessions = db.query(WorkoutSession).filter(
+        WorkoutSession.user_id == user_id,
+        WorkoutSession.occurred_at >= start_dt,
+        WorkoutSession.occurred_at <= end_dt,
     ).all()
 
     total_calories_in = sum(f.calories for f in food_logs)
     total_protein = sum(f.protein for f in food_logs)
     total_carbs = sum(f.carbs for f in food_logs)
     total_fat = sum(f.fat for f in food_logs)
-    total_burned = sum(w.calories_burned for w in workout_logs)
+    total_burned = sum(w.estimated_calories or 0 for w in workout_sessions)
 
     # Days logged count
-    days_with_logs = len(set(f.logged_at.date() for f in food_logs))
+    days_with_logs = len({as_bangkok(f.logged_at).date() for f in food_logs})
     divisor = max(days_with_logs, 1)
 
     avg_calories = round(total_calories_in / divisor, 1)
@@ -280,17 +352,16 @@ def get_weekly_stats(db: Session, user_id: str, days: int = 7) -> Dict[str, Any]
 
     # Check 4-Day Workout Split completion
     split_done = {
-        "day_1": any("day 1" in w.routine_name.lower() or "push" in w.routine_name.lower() for w in workout_logs),
-        "day_2": any("day 2" in w.routine_name.lower() or "pull" in w.routine_name.lower() for w in workout_logs),
-        "day_3": any("day 3" in w.routine_name.lower() or "lower" in w.routine_name.lower() or "ขา" in w.routine_name.lower() for w in workout_logs),
-        "day_4": any("day 4" in w.routine_name.lower() or "upper" in w.routine_name.lower() for w in workout_logs),
+        "day_1": any("push" in w.name.lower() for w in workout_sessions),
+        "day_2": any("pull" in w.name.lower() for w in workout_sessions),
+        "day_3": any("legs" in w.name.lower() or "ขา" in w.name.lower() for w in workout_sessions),
+        "day_4": any("upper" in w.name.lower() for w in workout_sessions),
     }
-    weight_sessions_count = sum(1 for w in workout_logs if w.workout_type == "weights")
+    weight_sessions_count = sum(1 for w in workout_sessions if w.session_type == "strength")
 
     # Cardio stats
-    cardio_logs = [w for w in workout_logs if w.workout_type == "cardio" or "เดินชัน" in w.routine_name]
-    cardio_count = len(cardio_logs)
-    cardio_minutes = sum(w.duration_min for w in cardio_logs)
+    cardio_count = sum(1 for w in workout_sessions if w.session_type == "cardio")
+    cardio_minutes = sum(w.estimated_duration_min or 0 for w in workout_sessions if w.session_type == "cardio")
 
     return {
         "start_date": start_date.strftime("%d/%m"),
@@ -326,8 +397,301 @@ def get_past_food_history(db: Session, user_id: str, limit: int = 10) -> List[Di
             "protein": round(log.protein, 1),
             "carbs": round(log.carbs, 1),
             "fat": round(log.fat, 1),
-            "date": log.logged_at.strftime("%d/%m"),
-            "time": log.logged_at.strftime("%H:%M")
+            "date": as_bangkok(log.logged_at).strftime("%d/%m"),
+            "time": as_bangkok(log.logged_at).strftime("%H:%M")
         }
         for log in logs
     ]
+
+
+def get_monthly_summary(db: Session, user_id: str, year: int, month: int) -> Dict[str, Any]:
+    """Aggregate food entries and workout sessions by Bangkok day."""
+    import calendar
+    from datetime import timedelta
+
+    user = db.query(User).filter(User.id == user_id).first()
+    # Incomplete profiles are valid before onboarding. Keep history readable
+    # without inventing personal targets or comparing against None.
+    target_kcal = float(user.daily_target_kcal) if user and user.daily_target_kcal is not None else 0.0
+    target_protein = float(user.target_protein_g) if user and user.target_protein_g is not None else 0.0
+
+    # Month date range
+    _, last_day = calendar.monthrange(year, month)
+    start_date = date(year, month, 1)
+    end_date = date(year, month, last_day)
+    start_dt, _ = bangkok_day_bounds(start_date)
+    _, end_dt = bangkok_day_bounds(end_date)
+
+    # Query all logs in the month
+    food_logs = db.query(FoodLog).filter(
+        FoodLog.user_id == user_id,
+        FoodLog.logged_at >= start_dt,
+        FoodLog.logged_at <= end_dt
+    ).order_by(FoodLog.logged_at.asc()).all()
+
+    workout_sessions = db.query(WorkoutSession).filter(
+        WorkoutSession.user_id == user_id,
+        WorkoutSession.occurred_at >= start_dt,
+        WorkoutSession.occurred_at <= end_dt,
+    ).order_by(WorkoutSession.occurred_at.asc()).all()
+
+    # Group by day
+    daily_data = {}
+    for d in range(1, last_day + 1):
+        day_date = date(year, month, d)
+        daily_data[day_date.isoformat()] = {
+            "date": day_date.isoformat(),
+            "date_display": day_date.strftime("%d/%m"),
+            "day_of_week": day_date.strftime("%a"),
+            "calories_in": 0.0,
+            "protein": 0.0,
+            "carbs": 0.0,
+            "fat": 0.0,
+            "calories_burned": 0.0,
+            "food_logs": [],
+            "workout_logs": [],
+            "protein_goal_met": False,
+            "has_workout": False
+        }
+
+    for f in food_logs:
+        local_time = as_bangkok(f.logged_at)
+        day_key = local_time.date().isoformat()
+        if day_key in daily_data:
+            daily_data[day_key]["calories_in"] += f.calories
+            daily_data[day_key]["protein"] += f.protein
+            daily_data[day_key]["carbs"] += f.carbs
+            daily_data[day_key]["fat"] += f.fat
+            daily_data[day_key]["food_logs"].append({
+                "id": f.id,
+                "name": f.food_name,
+                "portion": f.portion,
+                "calories": round(f.calories, 1),
+                "protein": round(f.protein, 1),
+                "carbs": round(f.carbs, 1),
+                "fat": round(f.fat, 1),
+                "time": local_time.strftime("%H:%M")
+            })
+
+    for w in workout_sessions:
+        local_time = as_bangkok(w.occurred_at)
+        day_key = local_time.date().isoformat()
+        if day_key in daily_data:
+            daily_data[day_key]["calories_burned"] += w.estimated_calories or 0
+            daily_data[day_key]["has_workout"] = True
+            daily_data[day_key]["workout_logs"].append({
+                "id": w.id,
+                "name": w.name,
+                "type": w.session_type,
+                "duration": round(w.estimated_duration_min or 0, 1),
+                "burned": round(w.estimated_calories or 0, 1),
+                "time": local_time.strftime("%H:%M"),
+                "estimated": bool(w.calories_estimated),
+            })
+
+    # Calculate protein goal met per day
+    for day_key in daily_data:
+        daily_data[day_key]["protein"] = round(daily_data[day_key]["protein"], 1)
+        daily_data[day_key]["calories_in"] = round(daily_data[day_key]["calories_in"], 1)
+        daily_data[day_key]["calories_burned"] = round(daily_data[day_key]["calories_burned"], 1)
+        daily_data[day_key]["protein_goal_met"] = target_protein > 0 and daily_data[day_key]["protein"] >= target_protein
+
+    # Monthly aggregates
+    days_with_food = [d for d in daily_data.values() if d["food_logs"]]
+    days_count = max(len(days_with_food), 1)
+    total_calories = sum(d["calories_in"] for d in daily_data.values())
+    total_protein = sum(d["protein"] for d in daily_data.values())
+    protein_days_met = sum(1 for d in daily_data.values() if d["protein_goal_met"])
+    total_workouts = sum(1 for d in daily_data.values() if d["has_workout"])
+
+    # Workout type counts
+    weights_count = sum(1 for w in workout_sessions if w.session_type == "strength")
+    cardio_count = sum(1 for w in workout_sessions if w.session_type == "cardio")
+
+    return {
+        "year": year,
+        "month": month,
+        "month_name": start_date.strftime("%B %Y"),
+        "total_days": last_day,
+        "days_logged": len(days_with_food),
+        "avg_daily_calories": round(total_calories / days_count, 1),
+        "avg_daily_protein": round(total_protein / days_count, 1),
+        "target_kcal": target_kcal,
+        "target_protein": target_protein,
+        "protein_days_met": protein_days_met,
+        "total_workout_sessions": total_workouts,
+        "weights_sessions": weights_count,
+        "cardio_sessions": cardio_count,
+        "daily_breakdown": list(daily_data.values())
+    }
+
+
+def update_food_log(db: Session, food_id: int, updates: Dict[str, Any], user_id: str | None = None) -> Optional[FoodLog]:
+    """Update calories and macros for an existing food log entry."""
+    query = db.query(FoodLog).filter(FoodLog.id == food_id)
+    if user_id is not None:
+        query = query.filter(FoodLog.user_id == user_id)
+    food = query.first()
+    if not food:
+        return None
+
+    if "calories" in updates:
+        food.calories = float(updates["calories"])
+    if "protein" in updates:
+        food.protein = float(updates["protein"])
+    if "carbs" in updates:
+        food.carbs = float(updates["carbs"])
+    if "fat" in updates:
+        food.fat = float(updates["fat"])
+    if "food_name" in updates:
+        food.food_name = str(updates["food_name"])
+    if "portion" in updates:
+        food.portion = str(updates["portion"])
+
+    db.commit()
+    db.refresh(food)
+    return food
+
+
+def delete_food_log(db: Session, food_id: int, user_id: str | None = None) -> bool:
+    """Delete a food log entry by ID."""
+    query = db.query(FoodLog).filter(FoodLog.id == food_id)
+    if user_id is not None:
+        query = query.filter(FoodLog.user_id == user_id)
+    food = query.first()
+    if not food:
+        return False
+    db.delete(food)
+    db.commit()
+    return True
+
+
+def get_user_profile(db: Session, user_id: str) -> Dict[str, Any]:
+    """Retrieve personal metrics, BMR, TDEE, and targets for a user."""
+    from app.config import settings
+    user = get_or_create_user(db, user_id, settings)
+    gender = user.gender or ""
+    weight = user.weight_kg
+    height = user.height_cm
+    age = user.age
+    if not is_user_profile_customized(user):
+        return {
+            "id": user.id,
+            "name": user.name or "",
+            "gender": gender,
+            "age": age,
+            "height_cm": height,
+            "weight_kg": weight,
+            "goal": user.goal or "",
+            "activity_level": user.activity_level or "",
+            "profile_completed": False,
+            "bmr": None,
+            "tdee": None,
+            "daily_target_kcal": None,
+            "target_protein_g": None,
+            "target_carbs_g": None,
+            "target_fat_g": None,
+        }
+    bmr = calculate_bmr(gender, weight, height, age)
+    tdee = calculate_tdee(bmr, float(user.activity_level or 1.45))
+    return {
+        "id": user.id,
+        "name": user.name or "User",
+        "gender": gender,
+        "age": age,
+        "height_cm": height,
+        "weight_kg": weight,
+        "goal": user.goal or "recomposition",
+        "activity_level": user.activity_level,
+        "profile_completed": True,
+        "bmr": bmr,
+        "tdee": tdee,
+        "daily_target_kcal": round(user.daily_target_kcal or 1950.0, 0),
+        "target_protein_g": round(user.target_protein_g or 145.0, 0),
+        "target_carbs_g": round(user.target_carbs_g or 220.0, 0),
+        "target_fat_g": round(user.target_fat_g or 55.0, 0)
+    }
+
+
+def update_user_profile(db: Session, user_id: str, data: Dict[str, Any]) -> Dict[str, Any]:
+    """Update user personal metrics and recalculate BMR, TDEE, and nutrition targets."""
+    from app.config import settings
+    user = get_or_create_user(db, user_id, settings)
+
+    if "name" in data and data["name"]:
+        user.name = str(data["name"]).strip()
+    if "gender" in data and data["gender"]:
+        user.gender = str(data["gender"]).strip().lower()
+    if "age" in data and data["age"]:
+        user.age = int(data["age"])
+    if "height_cm" in data and data["height_cm"]:
+        user.height_cm = float(data["height_cm"])
+    if "weight_kg" in data and data["weight_kg"]:
+        user.weight_kg = float(data["weight_kg"])
+    if "goal" in data and data["goal"]:
+        user.goal = str(data["goal"]).strip()
+
+    if "birth_date" in data and data["birth_date"]:
+        from datetime import date as date_type
+        value = data["birth_date"]
+        user.birth_date = date_type.fromisoformat(value) if isinstance(value, str) else value
+
+    if "activity_level" in data and data["activity_level"]:
+        user.activity_level = str(data["activity_level"]).strip()
+
+    raw_activity = data.get("activity_multiplier", data.get("activity_level", user.activity_level or 1.45))
+    try:
+        activity_mult = float(raw_activity)
+    except (TypeError, ValueError):
+        activity_mult = {"sedentary": 1.2, "light": 1.375, "moderate": 1.45, "active": 1.55, "very_active": 1.725}.get(str(raw_activity).lower(), 1.45)
+    user.activity_level = str(activity_mult)
+    required_profile_fields = ("name", "gender", "age", "height_cm", "weight_kg", "goal", "activity_level")
+    if any(getattr(user, field, None) in (None, "") for field in required_profile_fields):
+        user.profile_completed = False
+        db.commit()
+        db.refresh(user)
+        return get_user_profile(db, user_id)
+    bmr = calculate_bmr(user.gender, user.weight_kg, user.height_cm, user.age)
+    tdee = calculate_tdee(bmr, activity_mult)
+
+    goal = (user.goal or "").lower()
+    if "cut" in goal or "ลด" in goal:
+        target_kcal = round(tdee - 500, 0)
+    elif "bulk" in goal or "เพิ่ม" in goal:
+        target_kcal = round(tdee + 300, 0)
+    else:
+        target_kcal = round(tdee - 300, 0)
+
+    # Protein: 2.0g per kg
+    target_protein = round(user.weight_kg * 2.0, 0)
+    protein_cals = target_protein * 4
+    # Fat: 25% of calories
+    fat_cals = target_kcal * 0.25
+    target_fat = round(fat_cals / 9, 0)
+    # Remaining: Carbs
+    carb_cals = max(0, target_kcal - protein_cals - fat_cals)
+    target_carbs = round(carb_cals / 4, 0)
+
+    reset_targets = bool(data.get("reset_targets", False))
+    has_existing_targets = any(
+        getattr(user, field) is not None
+        for field in ("daily_target_kcal", "target_protein_g", "target_carbs_g", "target_fat_g")
+    )
+    if reset_targets or not has_existing_targets:
+        user.daily_target_kcal = target_kcal
+        user.target_protein_g = target_protein
+        user.target_carbs_g = target_carbs
+        user.target_fat_g = target_fat
+    for field in ("daily_target_kcal", "target_protein_g", "target_carbs_g", "target_fat_g"):
+        if data.get(field) is not None:
+            setattr(user, field, float(data[field]))
+    user.profile_completed = is_user_profile_customized(user) or all(
+        getattr(user, field, None) not in (None, "")
+        for field in ("name", "gender", "age", "height_cm", "weight_kg", "goal", "activity_level")
+    )
+
+    db.commit()
+    db.refresh(user)
+    if user.profile_completed:
+        seed_user_programs_if_needed(db, user_id)
+    return get_user_profile(db, user_id)

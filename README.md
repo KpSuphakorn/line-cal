@@ -10,10 +10,10 @@
 ![LINE API](https://img.shields.io/badge/LINE-Messaging_API_v3-00C300?logo=line&logoColor=white)
 ![Database](https://img.shields.io/badge/Database-PostgreSQL_%2F_Supabase-336791?logo=postgresql&logoColor=white)
 ![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker&logoColor=white)
-![Tests](https://img.shields.io/badge/Tests-16%20Passed%20(100%25)-brightgreen)
+![Tests](https://img.shields.io/badge/Tests-pytest-blue)
 
 <p align="center">
-  A production-grade, life-synchronized AI Chatbot built with <b>FastAPI</b>, <b>Google Gemini 2.0 Flash</b>, and <b>LINE Messaging API</b>. Designed to count food calories from photos, compute dynamic <b>BMR/TDEE energy balances</b>, and track weekly workout routines in real time.
+  A multi-user LINE assistant built with <b>FastAPI</b>, <b>Google Gemini</b>, and <b>LINE Messaging API</b>. Food capture and workout programs are editable from the LIFF Web App.
 </p>
 
 </div>
@@ -25,9 +25,8 @@
 **LINE Calorie & Fitness Companion** ถูกพัฒนาขึ้นเพื่อแก้ปัญหาความยุ่งยากในการนับแคลอรีและการบันทึกการออกกำลังกายในชีวิตประจำวัน โดยรวมทุกอย่างไว้ในแอป **LINE** ที่เปิดใช้งานอยู่ตลอดเวลา:
 - **📸 ถ่ายรูปอาหารนับแคลด้วย AI**: ส่งรูปอาหารเข้าแชต $\rightarrow$ Gemini Multimodal วิเคราะห์สัดส่วนอาหาร, ประมาณการแคลอรี และแยกสารอาหารหลัก (Protein, Carbs, Fat) ส่งกลับเป็นการ์ด Interactive Flex Message ทันที
 - **🎯 คำนวณพลังงานอัจฉริยะ (BMR / TDEE & Recomposition)**: คำนวณตามสูตร Mifflin-St Jeor ปรับโควตาแคลอรีและเป้าหมายโปรตีนอัตโนมัติตามสัดส่วนร่างกาย
-- **🏋️‍♂️ เชื่อมโยงตารางเวทเทรนนิ่ง 4 วัน + เดินชัน**: มีระบบ Checklist บันทึกเวท Day 1-4 (Push, Pull, Lower, Upper) และคำนวณแคลอรีที่เบิร์นตามน้ำหนักตัวจริง นำไปบวกเพิ่มเป็นโควตาอาหารในวันนั้น
-- **⚡ Quick-Log Shortcuts**: ปุ่มลัดแตะครั้งเดียวสำหรับอาหารประจำวัน (กล้วย Pre-workout, นม, มัจฉะลาเต้หวาน 0%, มัจฉะมะพร้าว, ถั่วไขมันดี)
-- **📈 Historical Statistics & Analytics**: ดูสรุปยอดวันนี้, ย้อนดูของเมื่อวาน, ดึงสถิติความสม่ำเสมอ 7 วัน และประวัติมื้ออาหารย้อนหลัง
+- **🏋️‍♂️ โปรแกรมออกกำลังส่วนตัว**: ระบบคัดลอก template Push, Pull และ Legs ให้ผู้ใช้แต่ละคนแก้ไขชื่อท่า เซ็ต ครั้ง น้ำหนัก และหมายเหตุได้แยกกัน
+- **📖 ประวัติย้อนหลัง**: ดูปฏิทินรายเดือน รายการอาหาร และ Workout Sessions พร้อมแก้ไขย้อนหลังได้ใน LIFF Web App
 
 ---
 
@@ -64,27 +63,14 @@ flowchart TD
 - **12-Factor App & Security**: แยกการตั้งค่าความลับทั้งหมดออกจากโค้ดผ่าน Pydantic V2 Settings และ `.env` โดยเด็ดขาด
 - **Cloud Database Ready**: รองรับ **Supabase (PostgreSQL)** พร้อม Connection Pooling (`pool_size`, `max_overflow`, `pool_pre_ping`) และ fallback SQLite สำหรับ Local Development
 - **Robust Multimodal AI Pipeline**: สกัดผลลัพธ์จาก Gemini Vision ออกมาเป็น Strict JSON Schema พร้อม Error Handling และ Fallback Mock สำหรับ Local Offline Testing
-- **100% Automated Test Coverage**: มีชุดทดสอบครอบคลุมทั้งสูตรคำนวณสรีรวิทยา, Schemas ของ Flex Message, และ REST API endpoints ทั้งหมด **16/16 Passed**
+- **Automated tests**: มีชุดทดสอบสูตรคำนวณ, Flex Message และ REST API; รันด้วย `pytest -v` ใน CI
 - **Containerized**: มาพร้อม `Dockerfile` (Multi-stage build) และ `docker-compose.yml` พร้อม Deploy ได้ทุก Cloud Provider (Render, Railway, Fly.io, AWS, VPS)
 
 ---
 
-## 🏋️ Preset Workout & Nutrition Engine
+## 🏋️ Workout programs
 
-ระบบถูกปรับแต่ง (Calibrated) ให้สอดคล้องกับสรีระและไลฟ์สไตล์การสร้างกล้ามเนื้อลดไขมัน (Body Recomposition):
-- **สัดส่วนร่างกายฐาน**: ชาย | อายุ 22 ปี | สูง 174 ซม. | หนัก 72 กก.
-- **BMR**: `1,700 kcal` | **TDEE เฉลี่ย**: `2,400 - 2,550 kcal/วัน`
-- **Daily Target**: `1,950 kcal/วัน` (Slight Deficit เพื่อดึงไขมันมาใช้)
-- **โปรตีนเป้าหมาย**: `145 g/วัน` (~2.0g ต่อน้ำหนักตัว 1 กก.)
-
-### ตารางเวทเทรนนิ่ง 4 วัน (4-Day Push/Pull/Lower/Upper Split):
-| Routine | รายการท่าหลัก | แคลอรีเผาผลาญโดยประมาณ |
-|---|---|---|
-| **Day 1: Push** | Pec dec fly (40kg), Flat bench (20kg), Incline bench (20kg), Lower chest fly (15kg), Lateral raises (4kg), Triceps (7.5kg) | ~300 kcal |
-| **Day 2: Pull** | Lat pull down (35kg), T-bar/Barbell row (17.5kg), One arm row (12kg), Seated row (40kg), Lat pullover (10kg), Biceps (30kg) | ~300 kcal |
-| **Day 3: Lower & Core** | Hip adductors (40kg), Legs curl (60kg), Hack squat, Legs press (80kg), Legs extension (60kg), Abdominal crunch (45kg) | ~350 kcal |
-| **Day 4: Upper** | Shoulders press (10kg), Lateral raises, Rear delt/Face pull, Pec dec fly (40kg), Cable pullover (15kg), Arms | ~320 kcal |
-| **Cardio: เดินชัน** | เดินชันความชัน 10-12% ความเร็ว 4.5-5.0 km/h (40 / 50 / 60 นาที) | ~280 - 420 kcal |
+หลัง onboarding ระบบจะคัดลอก template Push, Pull และ Legs เป็นโปรแกรมของผู้ใช้แต่ละคน โปรแกรมไม่ผูกกับวันในสัปดาห์ และแก้ไขได้จาก Web App; Cardio อยู่ใน entry point เดียวกับโปรแกรมเวท
 
 ---
 
@@ -93,15 +79,13 @@ flowchart TD
 | คำสั่ง | ผลลัพธ์ |
 |---|---|
 | 📸 **ส่งรูปภาพอาหาร** | AI วิเคราะห์ชื่ออาหาร, แคลอรี, โปรตีน/คาร์บ/ไขมัน พร้อมการ์ดกดยืนยันบันทึก |
-| `สรุป` / `แคล` / `dashboard` | ดูการ์ด Daily Balance Dashboard พร้อม Progress Bar และสารอาหารสะสมวันนี้ |
-| `สถิติ` / `week` / `สัปดาห์นี้` | ดูสรุป 7 วัน: แคลอรีเฉลี่ย, โปรตีนเฉลี่ย, Checklist เวทครบ 4 วันหรือไม่, สรุปเดินชัน |
-| `เมื่อวาน` | ดูสรุปยอดและรายการอาหาร/การออกกำลังกายของเมื่อวาน |
-| `ประวัติ` / `ประวัติอาหาร` | ดูรายการอาหาร 8 รายการล่าสุดที่บันทึกไว้ในฐานข้อมูล |
-| `เวท` / `ตาราง` | เปิดเมนูตารางเวท 4 วัน พร้อมปุ่มกดบันทึกจบวัน |
-| `Day 1` ถึง `Day 4` | บันทึกเวทประจำวันทันที พร้อมเพิ่มโควตาแคลอรี |
-| `เดินชัน 40` / `50` / `60` | บันทึกการเดินชันพร้อมคำนวณแคลอรีที่เบิร์นตามน้ำหนักตัว |
-| `กล้วย` / `นม` | บันทึก Pre-workout snack ทันที |
-| `มัจฉะ` / `มัจฉะมะพร้าว` / `ถั่ว` | บันทึกของว่างและเครื่องดื่มทำงานทันที |
+| `สรุป` | ดูสรุปอาหารและการออกกำลังกายวันนี้ |
+| `กิน <รายการอาหาร>` | ให้ AI เสนอรายการอาหารเพื่อแก้ไขและยืนยันก่อนบันทึก |
+| `ออกกำลังกาย` / `โปรแกรม` | เลือกโปรแกรมส่วนตัวหรือ Cardio |
+| `ประวัติ` | เปิดปฏิทินและรายละเอียดรายการย้อนหลังใน LIFF Web App |
+| `วิธีใช้` | ดูคำสั่งที่รองรับ |
+
+การตั้งค่า Profile ทำในแท็บ Profile ของ LIFF Web App และต้องกรอกให้ครบก่อนบันทึกข้อมูล
 
 ---
 
@@ -130,8 +114,12 @@ GEMINI_API_KEY=your_gemini_api_key
 
 # ฐานข้อมูล: เลือกใช้ Local SQLite หรือ Supabase PostgreSQL
 DATABASE_URL=sqlite:///./line_cal.db
-# หรือ Supabase:
-# DATABASE_URL=postgresql://postgres.xxxx:your_password@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres
+# หรือ Supabase (production runtime):
+# DATABASE_URL=postgresql://postgres.xxxx:your_password@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres
+# ใช้ Direct connection (หรือ Session pooler 5432) สำหรับ Alembic migrations;
+# อย่าใช้ Transaction pooler 6543 ใน migration
+# Production also requires APP_ENV=production, LINE_LOGIN_CHANNEL_ID, LIFF_ID,
+# and WEBAPP_BASE_URL. Apply `alembic upgrade head` before starting the service.
 ```
 
 ### 3. Run Locally
@@ -162,16 +150,16 @@ line-cal/
 │       └── ci.yml             # GitHub Actions CI Workflow
 ├── app/
 │   ├── data/
-│   │   └── presets.py         # 4-Day workout splits & quick snack presets
+│   │   └── presets.py         # System Push/Pull/Legs program templates
 │   ├── db/
 │   │   ├── database.py        # SQLAlchemy engine & Supabase connection pool
-│   │   └── models.py          # Relational ORM models (User, FoodLog, WorkoutLog)
+│   │   └── models.py          # Relational ORM models (food captures, programs, sessions)
 │   ├── services/
 │   │   ├── ai_vision.py       # Gemini Multimodal AI vision analysis
-│   │   ├── fitness.py         # BMR, TDEE, Deficit & 7-day stats engine
-│   │   └── line_handler.py    # LINE Webhook event dispatcher & shortcuts
+│   │   ├── fitness.py         # BMR, TDEE and daily/monthly summaries
+│   │   └── line_handler.py    # LINE Webhook event dispatcher & supported commands
 │   ├── templates/
-│   │   └── flex_cards.py      # Premium LINE Flex Message JSON builders
+│   │   └── flex_cards.py      # Canonical LINE Flex Message cards
 │   ├── config.py              # Pydantic Settings
 │   └── main.py                # FastAPI entrypoint & simulation endpoints
 ├── tests/

@@ -1,27 +1,22 @@
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
-from app.config import settings
+from app.config import normalize_postgres_url, postgres_connect_args, settings, validate_production_settings
 
 db_url = settings.DATABASE_URL.strip()
-
-# Normalize PostgreSQL URL for SQLAlchemy if needed
-if db_url.startswith("postgres://"):
-    db_url = db_url.replace("postgres://", "postgresql+psycopg2://", 1)
-elif db_url.startswith("postgresql://") and not db_url.startswith("postgresql+"):
-    db_url = db_url.replace("postgresql://", "postgresql+psycopg2://", 1)
+db_url = normalize_postgres_url(db_url)
 
 # Configure engine arguments
-connect_args = {}
+connect_args = postgres_connect_args(db_url)
 engine_kwargs = {
     "pool_pre_ping": True
 }
 
-if "sqlite" in db_url:
+if db_url.lower().startswith("sqlite"):
     connect_args["check_same_thread"] = False
 else:
     # Supabase / PostgreSQL specific optimizations
-    engine_kwargs["pool_size"] = 10
-    engine_kwargs["max_overflow"] = 20
+    engine_kwargs["pool_size"] = settings.DB_POOL_SIZE
+    engine_kwargs["max_overflow"] = settings.DB_MAX_OVERFLOW
 
 engine = create_engine(
     db_url,
@@ -43,4 +38,8 @@ def get_db():
 
 def init_db():
     from app.db import models
+    validate_production_settings()
+    if settings.APP_ENV.lower() in {"production", "prod"}:
+        # Production schema changes must be applied by Alembic before startup.
+        return
     Base.metadata.create_all(bind=engine)
