@@ -12,7 +12,9 @@ from app.templates.flex_cards import (
     create_welcome_guide_card,
     create_workout_logged_card,
     create_workout_splits_carousel,
+    webapp_uri,
 )
+from app.config import settings
 
 
 def test_food_analyzed_card_valid():
@@ -148,3 +150,21 @@ def test_history_card_opens_history_tab():
     assert container.type == "bubble"
     action = card_dict["footer"]["contents"][0]["action"]
     assert "tab=history" in action["uri"]
+
+
+def test_web_actions_use_liff_deep_link_and_preserve_query_values():
+    uri = webapp_uri("today", "capture_token=abc%2F123&cardio=1")
+
+    assert uri == "https://liff.line.me/mock_liff_id/?tab=today&capture_token=abc%2F123&cardio=1"
+    assert "user_id" not in uri
+
+
+def test_webapp_uri_uses_direct_endpoint_only_outside_production(monkeypatch):
+    monkeypatch.setattr(settings, "LIFF_ID", None)
+    monkeypatch.setattr(settings, "APP_ENV", "development")
+    monkeypatch.setattr(settings, "WEBAPP_BASE_URL", "http://localhost:8000/webapp")
+
+    assert webapp_uri("history") == "http://localhost:8000/webapp?tab=history"
+
+    monkeypatch.setattr(settings, "APP_ENV", "production")
+    assert webapp_uri("history") == ""

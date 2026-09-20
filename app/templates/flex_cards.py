@@ -6,12 +6,28 @@ from app.config import settings
 
 
 def webapp_uri(tab: str = "today", query: str = "") -> str:
-    """Build a LIFF URL without putting a user identifier in the URL."""
+    """Build a LINE deep link without putting a user identifier in the URL.
+
+    Production cards must enter the Web App through LIFF so LINE can establish
+    the authenticated browser session.  The direct endpoint remains a small
+    local-development fallback for tests and non-production environments.
+    """
+    params = [("tab", tab)]
+    if query:
+        params.extend(urllib.parse.parse_qsl(query, keep_blank_values=True))
+    query_string = urllib.parse.urlencode(params)
+
+    liff_id = (settings.LIFF_ID or "").strip()
+    if liff_id:
+        return f"https://liff.line.me/{urllib.parse.quote(liff_id, safe='')}/?{query_string}"
+
+    if settings.APP_ENV.lower() in {"production", "prod"}:
+        return ""
     if not settings.WEBAPP_BASE_URL:
         return ""
-    separator = "&" if "?" in settings.WEBAPP_BASE_URL else "?"
-    result = f"{settings.WEBAPP_BASE_URL}{separator}tab={urllib.parse.quote(tab)}"
-    return f"{result}&{query}" if query else result
+    base = settings.WEBAPP_BASE_URL.rstrip("?")
+    separator = "&" if "?" in base else "?"
+    return f"{base}{separator}{query_string}"
 
 
 def _button(label: str, action: Dict[str, Any], style: str = "secondary") -> Dict[str, Any]:

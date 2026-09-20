@@ -106,6 +106,13 @@ def test_webapp_dashboard_endpoint():
     assert response.status_code == 200
     assert "<title>LINE Cal</title>" in response.text
     assert "bottom-nav" in response.text
+    assert "100dvh" in response.text
+    assert "modal-actions" in response.text
+    assert "body.modal-open" in response.text
+    assert "input.dataset.field=options.key" in response.text
+    assert "exercise-details" in response.text
+    assert "querySelector(`[data-field=\"${key}\"]`)" in response.text
+    assert "node('div',message,'toast')" in response.text
     assert "class=\"tab-nav\"" not in response.text
     assert "reset_targets" in response.text
     assert "บันทึกเป้าหมาย" in response.text
