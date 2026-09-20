@@ -139,6 +139,11 @@ def test_webapp_dashboard_endpoint():
     assert "เลือกวันที่ต้องการดูรายละเอียด" in response.text
     assert "target-settings" in response.text
     assert "ปรับเป้าหมายเอง (ไม่จำเป็น)" in response.text
+    assert "target-settings summary::after" in response.text
+    assert "target-settings[open] summary::after" in response.text
+    assert "min-height:44px" in response.text
+    assert ".card>.button{margin-top:8px}" in response.text
+    assert "'section-intro'),button('สร้างรายการคาร์ดิโอ'" in response.text
     assert "เพซประมาณ" in response.text
     assert "aria-pressed" in response.text
     assert "aria-current" in response.text
