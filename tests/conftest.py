@@ -57,8 +57,14 @@ def boom_genai():
 
 @pytest.fixture
 def flaky_genai_factory():
-    """A fake google.generativeai module that fails on one model name and succeeds on any other."""
+    """A fake google.generativeai module that fails on one model name and succeeds on any other.
+
+    The returned module records every generate_content kwargs set on
+    `.calls`, so tests can assert how the request was configured.
+    """
     def _make(failing_model: str, success_items: list[dict]):
+        calls: list[dict] = []
+
         class _Response:
             text = json.dumps({"items": success_items})
 
@@ -67,11 +73,14 @@ def flaky_genai_factory():
                 self.name = name
 
             def generate_content(self, *args, **kwargs):
+                calls.append({"model": self.name, **kwargs})
                 if self.name == failing_model:
                     raise RuntimeError("429 quota exceeded")
                 return _Response()
 
         class _FlakyGenAI:
+            calls: list[dict] = []
+
             @staticmethod
             def configure(**kwargs):
                 pass
@@ -80,6 +89,7 @@ def flaky_genai_factory():
             def GenerativeModel(name, *args, **kwargs):
                 return _Model(name)
 
+        _FlakyGenAI.calls = calls
         return _FlakyGenAI()
 
     return _make

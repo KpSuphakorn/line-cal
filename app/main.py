@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Optional
 from datetime import datetime, date
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request, Header, HTTPException, Depends, UploadFile, File, Query
+from fastapi import BackgroundTasks, FastAPI, Request, Header, HTTPException, Depends, UploadFile, File, Query
 from fastapi.responses import PlainTextResponse, HTMLResponse
 from pydantic import BaseModel, Field, field_validator
 from linebot.v3 import WebhookParser
@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.auth import AuthenticatedUser, get_current_user
-from app.db.database import init_db, get_db
+from app.db.database import SessionLocal, init_db, get_db
 from app.services.line_handler import handle_line_events
 from app.services.fitness import (
     get_daily_summary, get_or_create_user, get_history_summary, update_food_log, delete_food_log,
@@ -95,11 +95,25 @@ def health_check():
     return {"status": "healthy"}
 
 
+def _process_webhook_events(events: list) -> None:
+    """Run the handlers on their own session, after the 200 has been sent.
+
+    The request-scoped session from get_db is already closed by then.
+    """
+    db = SessionLocal()
+    try:
+        handle_line_events(events, db)
+    except Exception:
+        logger.exception("Background webhook processing failed")
+    finally:
+        db.close()
+
+
 @app.post("/webhook")
 async def line_webhook(
     request: Request,
+    background_tasks: BackgroundTasks,
     x_line_signature: str = Header(None),
-    db: Session = Depends(get_db)
 ):
     """LINE Messaging API Webhook Endpoint."""
     if not x_line_signature:
@@ -117,8 +131,9 @@ async def line_webhook(
         logger.error(f"Error parsing webhook body: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-    # Process events synchronously
-    handle_line_events(events, db)
+    # Acknowledge first: LINE times out the webhook long before an AI food
+    # analysis finishes, and a timed-out delivery means the user gets nothing.
+    background_tasks.add_task(_process_webhook_events, events)
 
     return PlainTextResponse("OK", status_code=200)
 

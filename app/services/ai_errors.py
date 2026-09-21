@@ -14,6 +14,12 @@ logger = logging.getLogger(__name__)
 # available to new users".
 FOOD_MODELS = ("gemini-3.6-flash", "gemini-3.7-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite")
 
+# A 429 from a quota-exhausted model carries a "retry in 22s" hint that
+# google-api-core honours by sleeping and retrying in-process. The whole call
+# has to finish inside LINE's webhook window, and the model chain above already
+# covers an exhausted model, so retry is disabled: fail fast, try the next one.
+GEMINI_REQUEST_OPTIONS = {"retry": None, "timeout": 8}
+
 
 class FoodAnalysisError(RuntimeError):
     """Raised when Gemini fails to produce a real food analysis.
@@ -40,6 +46,7 @@ def generate_food_json(genai_module: Any, contents: list, log_label: str) -> dic
                     "response_mime_type": "application/json",
                     "temperature": 0.2,
                 },
+                request_options=GEMINI_REQUEST_OPTIONS,
             )
             content_text = response.text.strip()
             if content_text.startswith("```json"):

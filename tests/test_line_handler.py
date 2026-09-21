@@ -323,19 +323,27 @@ def test_chat_confirm_postback_reports_expired_capture(mock_reply_text):
 
 @patch("app.services.line_handler.get_line_clients")
 @patch("app.services.line_handler.reply_messages", side_effect=RuntimeError("LINE unavailable"))
-def test_failed_event_is_not_marked_and_is_propagated(mock_reply, mock_get_clients):
+def test_failed_event_is_not_marked_and_does_not_abort_the_batch(mock_reply, mock_get_clients):
+    """The webhook is acknowledged before this runs, so a failure must not
+    swallow the events queued behind it — LINE will not redeliver them."""
     mock_get_clients.return_value = (MagicMock(), MagicMock(), MagicMock())
     db = get_test_db()
-    event = MagicMock(spec=FollowEvent)
-    event.reply_token = "reply-failure"
-    event.webhook_event_id = "event-failure"
-    event.source = MagicMock()
-    event.source.user_id = "failed-user"
 
-    with pytest.raises(RuntimeError, match="LINE unavailable"):
-        handle_line_events([event], db)
+    def _follow_event(suffix: str):
+        event = MagicMock(spec=FollowEvent)
+        event.reply_token = f"reply-{suffix}"
+        event.webhook_event_id = f"event-{suffix}"
+        event.source = MagicMock()
+        event.source.user_id = f"user-{suffix}"
+        return event
 
+    handle_line_events([_follow_event("failure"), _follow_event("failure-sibling")], db)
+
+    # Neither is marked (both hit the failing reply), but the second was still
+    # attempted rather than dropped with the first one's exception.
     assert db.query(ProcessedWebhook).filter_by(event_id="event-failure").count() == 0
+    assert db.query(ProcessedWebhook).filter_by(event_id="event-failure-sibling").count() == 0
+    assert mock_reply.call_count == 2
 
 
 @patch("app.services.line_handler.get_line_clients")

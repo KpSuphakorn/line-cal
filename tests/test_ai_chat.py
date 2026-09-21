@@ -44,3 +44,18 @@ def test_parse_food_text_falls_back_to_next_pinned_model_on_quota_error(monkeypa
 
     res = parse_food_text("กิน ข้าวผัด")
     assert res["items"][0]["food_name"] == "ข้าวผัด"
+
+
+def test_parse_food_text_does_not_let_the_sdk_sleep_and_retry(monkeypatch, flaky_genai_factory):
+    """A 429 must move to the next model immediately, not sleep out LINE's webhook window."""
+    monkeypatch.setattr(settings, "GEMINI_API_KEY", "genuine-real-api-key")
+    genai = flaky_genai_factory(FOOD_MODELS[0], [{"food_name": "ข้าวผัด", "calories": 300}])
+    monkeypatch.setitem(sys.modules, "google.generativeai", genai)
+
+    parse_food_text("กิน ข้าวผัด")
+
+    assert genai.calls, "expected generate_content to be called"
+    for call in genai.calls:
+        options = call["request_options"]
+        assert options["retry"] is None
+        assert options["timeout"] > 0

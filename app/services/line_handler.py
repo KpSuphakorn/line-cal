@@ -212,15 +212,18 @@ def handle_line_events(events: list, db: Session):
             elif isinstance(event, PostbackEvent):
                 handle_postback_event(event, user_id, messaging_api, db)
 
-            # Record only after the handler completed.  A failed handler has
-            # no marker and therefore remains eligible for LINE redelivery.
+            # Record only after the handler completed, so a failed handler
+            # leaves no marker and a genuine LINE redelivery still runs.
             db.add(ProcessedWebhook(event_id=event_id, user_id=user_id))
             db.commit()
 
         except Exception as e:
+            # Keep going: the webhook is acknowledged before this runs, so a
+            # raise here would silently drop every remaining event in the
+            # batch with no LINE retry to recover them.
             logger.error(f"Error handling LINE event: {e}", exc_info=True)
             db.rollback()
-            raise
+            continue
 
 
 def handle_image_message(event: MessageEvent, user_id: str, messaging_api: MessagingApi, blob_api: MessagingApiBlob, db: Session):

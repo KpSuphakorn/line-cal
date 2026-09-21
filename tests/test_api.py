@@ -653,3 +653,40 @@ def test_history_workout_details_use_today_session_display_fields_and_dynamic_ye
     for session in (strength, cardio):
         assert sessions[session["id"]]["estimated_duration_min"] == session["estimated_duration_min"]
         assert sessions[session["id"]]["estimated_calories"] == session["estimated_calories"]
+
+
+def test_webhook_acknowledges_before_running_slow_handlers(monkeypatch):
+    """LINE must get its 200 without waiting on the AI analysis behind it."""
+    import asyncio
+    import base64
+    import hashlib
+    import hmac
+    from fastapi import BackgroundTasks
+
+    from app.config import settings
+    import app.main as main_module
+
+    calls = []
+    monkeypatch.setattr(main_module, "handle_line_events", lambda events, db: calls.append(events))
+
+    body = '{"events":[],"destination":"x"}'
+    signature = base64.b64encode(
+        hmac.new(settings.LINE_CHANNEL_SECRET.encode(), body.encode(), hashlib.sha256).digest()
+    ).decode()
+
+    class _Request:
+        async def body(self):
+            return body.encode()
+
+    background_tasks = BackgroundTasks()
+    response = asyncio.run(
+        main_module.line_webhook(_Request(), background_tasks, x_line_signature=signature)
+    )
+
+    assert response.status_code == 200
+    # The response is ready while the work is still only queued.
+    assert calls == []
+    assert len(background_tasks.tasks) == 1
+
+    asyncio.run(background_tasks())
+    assert calls == [[]]
