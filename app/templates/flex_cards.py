@@ -77,6 +77,14 @@ def create_food_analyzed_card(food_data: Dict[str, Any], capture_token: str, use
     ))
     if edit_url:
         footer.append(_button("✏️ แก้ไขรายการ", {"type": "uri", "uri": edit_url}, "link"))
+    footer.append(_button(
+        "ยกเลิกรายการ",
+        {
+            "type": "postback",
+            "data": f"action=cancel_food_capture_chat&capture_token={urllib.parse.quote(capture_token, safe='')}",
+            "displayText": "ยกเลิกรายการอาหาร",
+        },
+    ))
     return _bubble(f"🥗 AI วิเคราะห์ {len(items)} รายการ", [{"type": "text", "text": f"รวมประมาณ {total:.0f} kcal • ตรวจสอบและแก้ไขก่อนยืนยัน", "size": "sm", "color": "#475569"}, *rows], footer, "#059669")
 
 

@@ -7,7 +7,7 @@ from linebot.v3.messaging import TextMessage, FlexMessage
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from app.db.models import Base, ProcessedWebhook
+from app.db.models import Base, FoodLog, ProcessedWebhook
 from app.services.fitness import update_user_profile
 from app.services.food_capture import create_capture
 from app.services.line_handler import handle_line_events, handle_postback_event, WELCOME_INTRO_TEXT, WELCOME_FEATURES_TEXT
@@ -243,12 +243,69 @@ def test_chat_confirm_postback_confirms_only_authenticated_owner(mock_reply_text
 
     handle_postback_event(_postback(f"action=confirm_food_capture_chat&capture_token={capture.token}"), other, MagicMock(), db)
     assert db.query(type(capture)).filter_by(token=capture.token).one().status == "draft"
-    assert "หมดอายุหรือไม่พร้อมยืนยัน" in mock_reply_text.call_args.args[2]
+    assert "ไม่พบรายการอาหาร" in mock_reply_text.call_args.args[2]
 
     handle_postback_event(_postback(f"action=confirm_food_capture_chat&capture_token={capture.token}"), owner, MagicMock(), db)
     saved = db.query(type(capture)).filter_by(token=capture.token).one()
     assert saved.status == "confirmed"
     assert "ยืนยันรายการอาหารแล้ว" in mock_reply_text.call_args.args[2]
+
+
+@patch("app.services.line_handler.reply_today_status")
+@patch("app.services.line_handler.reply_text")
+def test_chat_confirm_postback_repeated_tap_reports_already_confirmed_without_duplicate_logs(mock_reply_text, mock_reply_today):
+    db = get_test_db()
+    owner = "double-confirm-owner"
+    _complete_profile(db, owner)
+    capture = create_capture(db, owner, "text", [{"food_name": "ข้าว", "calories": 400}])
+    data = f"action=confirm_food_capture_chat&capture_token={capture.token}"
+
+    handle_postback_event(_postback(data), owner, MagicMock(), db)
+    handle_postback_event(_postback(data), owner, MagicMock(), db)
+
+    assert db.query(FoodLog).filter_by(user_id=owner, capture_id=capture.id).count() == 1
+    mock_reply_today.assert_called_once()
+    assert "ยืนยันไปแล้ว" in mock_reply_today.call_args.args[2]
+    assert "แก้ไขรายการร่างไม่ได้แล้ว" in mock_reply_today.call_args.args[2]
+
+
+@patch("app.services.line_handler.reply_text")
+def test_chat_cancel_postback_is_owner_scoped_and_reports_state(mock_reply_text):
+    db = get_test_db()
+    owner = "cancel-owner"
+    other = "cancel-other"
+    _complete_profile(db, owner)
+    _complete_profile(db, other)
+    capture = create_capture(db, owner, "text", [{"food_name": "ข้าว", "calories": 400}])
+    data = f"action=cancel_food_capture_chat&capture_token={capture.token}"
+
+    handle_postback_event(_postback(data), other, MagicMock(), db)
+    assert db.query(type(capture)).filter_by(token=capture.token).one().status == "draft"
+    assert "ไม่พบรายการอาหาร" in mock_reply_text.call_args.args[2]
+
+    handle_postback_event(_postback(data), owner, MagicMock(), db)
+    assert db.query(type(capture)).filter_by(token=capture.token).one().status == "cancelled"
+    assert "ยกเลิกรายการอาหารแล้ว" in mock_reply_text.call_args.args[2]
+
+    handle_postback_event(_postback(data), owner, MagicMock(), db)
+    assert "ถูกยกเลิกไปแล้ว" in mock_reply_text.call_args.args[2]
+
+
+@patch("app.services.line_handler.reply_text")
+def test_chat_cancel_postback_reports_confirmed_and_expired(mock_reply_text):
+    db = get_test_db()
+    owner = "cancel-state-owner"
+    _complete_profile(db, owner)
+    confirmed = create_capture(db, owner, "text", [{"food_name": "ข้าว", "calories": 400}])
+    handle_postback_event(_postback(f"action=confirm_food_capture_chat&capture_token={confirmed.token}"), owner, MagicMock(), db)
+    handle_postback_event(_postback(f"action=cancel_food_capture_chat&capture_token={confirmed.token}"), owner, MagicMock(), db)
+    assert "ยืนยันไปแล้ว" in mock_reply_text.call_args.args[2]
+
+    expired = create_capture(db, owner, "text", [{"food_name": "ไข่", "calories": 100}])
+    expired.expires_at = datetime.now(timezone.utc) - timedelta(minutes=1)
+    db.commit()
+    handle_postback_event(_postback(f"action=cancel_food_capture_chat&capture_token={expired.token}"), owner, MagicMock(), db)
+    assert "หมดอายุแล้ว" in mock_reply_text.call_args.args[2]
 
 
 @patch("app.services.line_handler.reply_text")

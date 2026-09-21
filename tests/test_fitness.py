@@ -3,12 +3,13 @@
 from datetime import datetime, date, timezone
 
 import pytest
+from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.config import settings
 from app.db.database import Base
-from app.db.models import FoodLog, User
+from app.db.models import FoodAnalysisDraft, FoodLog, User
 from app.services.fitness import (
     calculate_bmr,
     calculate_incline_walk_burn,
@@ -24,6 +25,15 @@ from app.services.fitness import (
 )
 from app.services.workouts import create_cardio_session, create_strength_session, save_cardio_preset
 from app.services.workouts import delete_program
+from app.services.food_capture import (
+    cancel_capture_result,
+    confirm_capture,
+    confirm_capture_result,
+    create_capture,
+    get_editable_capture,
+    update_capture,
+)
+import app.services.food_capture as food_capture_service
 
 
 @pytest.fixture
@@ -149,6 +159,124 @@ def test_food_crud_for_incomplete_profile(db_session):
     assert updated is not None
     assert updated.calories == 400.0
     assert updated.food_name == "ข้าวไข่เจียวไร้น้ำมัน"
+
+
+def test_food_capture_action_results_are_stateful_and_owner_scoped(db_session):
+    owner = "capture-service-owner"
+    other = "capture-service-other"
+    capture = create_capture(db_session, owner, "text", [{"food_name": "ข้าว", "calories": 400}])
+
+    assert cancel_capture_result(db_session, other, capture.token).status == "missing"
+    assert confirm_capture_result(db_session, owner, capture.token).status == "confirmed"
+    assert confirm_capture_result(db_session, owner, capture.token).status == "already_confirmed"
+    assert cancel_capture_result(db_session, owner, capture.token).status == "confirmed"
+
+    cancelled = create_capture(db_session, owner, "text", [{"food_name": "ไข่", "calories": 100}])
+    assert cancel_capture_result(db_session, owner, cancelled.token).status == "cancelled"
+    assert cancel_capture_result(db_session, owner, cancelled.token).status == "already_cancelled"
+    with pytest.raises(HTTPException, match="ยืนยันหรือยกเลิก") as error:
+        get_editable_capture(db_session, owner, cancelled.token)
+    assert error.value.status_code == 409
+
+
+@pytest.mark.parametrize("terminal_action", ["confirm", "cancel"])
+def test_stale_capture_update_cannot_mutate_after_terminal_action(db_session, terminal_action):
+    """A second session's chat action wins over a stale LIFF update."""
+    engine = db_session.get_bind()
+    sessions = sessionmaker(bind=engine)
+    liFF_db = sessions()
+    chat_db = sessions()
+    try:
+        user_id = f"capture-race-{terminal_action}"
+        capture = create_capture(liFF_db, user_id, "text", [{"food_name": "ข้าว", "calories": 400}])
+        token = capture.token
+        original_draft = liFF_db.query(FoodAnalysisDraft).filter_by(capture_id=capture.id).one()
+
+        if terminal_action == "confirm":
+            assert confirm_capture(chat_db, user_id, token)
+        else:
+            assert cancel_capture_result(chat_db, user_id, token).status == "cancelled"
+
+        # The real LIFF request uses a fresh transaction; expire this session's
+        # identity map so the update path must observe chat's terminal commit.
+        liFF_db.expire_all()
+        with pytest.raises(HTTPException, match="no longer editable"):
+            update_capture(liFF_db, user_id, token, [{"food_name": "รายการเก่าที่แก้ค้าง", "calories": 1}])
+
+        saved = chat_db.query(type(capture)).filter_by(token=token).one()
+        drafts = chat_db.query(FoodAnalysisDraft).filter_by(capture_id=saved.id).all()
+        assert saved.status in {"confirmed", "cancelled"}
+        assert [draft.id for draft in drafts] == [original_draft.id]
+        if terminal_action == "confirm":
+            assert chat_db.query(FoodLog).filter_by(capture_id=saved.id, user_id=user_id).count() == 1
+        else:
+            assert chat_db.query(FoodLog).filter_by(capture_id=saved.id, user_id=user_id).count() == 0
+    finally:
+        liFF_db.close()
+        chat_db.close()
+
+
+def test_editor_get_uses_parent_lock_for_expiry_transition(db_session, monkeypatch):
+    """The expiry mutation is guarded by the same lock as chat actions."""
+    owner = "capture-editor-expiry-lock"
+    capture = create_capture(db_session, owner, "text", [{"food_name": "ข้าว", "calories": 400}])
+    capture.expires_at = datetime.now(timezone.utc)
+    db_session.commit()
+    calls = []
+    original_get = food_capture_service._get_capture
+
+    def tracked_get(db, user_id, token, lock=False):
+        calls.append(lock)
+        return original_get(db, user_id, token, lock=lock)
+
+    monkeypatch.setattr(food_capture_service, "_get_capture", tracked_get)
+    with pytest.raises(HTTPException) as error:
+        get_editable_capture(db_session, owner, capture.token)
+
+    assert error.value.status_code == 410
+    assert calls == [True]
+    saved = db_session.query(type(capture)).filter_by(token=capture.token).one()
+    assert saved.status == "cancelled"
+    assert saved.cancelled_at is not None
+
+
+def test_stale_update_expiry_records_cancelled_at(db_session):
+    owner = "capture-update-expiry"
+    capture = create_capture(db_session, owner, "text", [{"food_name": "ข้าว", "calories": 400}])
+    capture.expires_at = datetime.now(timezone.utc)
+    db_session.commit()
+
+    with pytest.raises(HTTPException) as error:
+        update_capture(db_session, owner, capture.token, [{"food_name": "รายการเก่า", "calories": 1}])
+
+    assert error.value.status_code == 410
+    saved = db_session.query(type(capture)).filter_by(token=capture.token).one()
+    assert saved.status == "cancelled"
+    assert saved.cancelled_at is not None
+
+
+def test_confirm_wins_before_editor_get_and_keeps_one_log(db_session):
+    """Deterministic ordering check; SQLite does not provide true FOR UPDATE concurrency."""
+    engine = db_session.get_bind()
+    sessions = sessionmaker(bind=engine)
+    editor_db = sessions()
+    chat_db = sessions()
+    try:
+        owner = "capture-editor-after-confirm"
+        capture = create_capture(editor_db, owner, "text", [{"food_name": "ข้าว", "calories": 400}])
+        token = capture.token
+        # Emulate the editor having read the draft before the chat action.
+        editor_db.query(type(capture)).filter_by(token=token).one()
+        assert len(confirm_capture(chat_db, owner, token)) == 1
+        editor_db.expire_all()
+
+        with pytest.raises(HTTPException) as error:
+            get_editable_capture(editor_db, owner, token)
+        assert error.value.status_code == 409
+        assert chat_db.query(FoodLog).filter_by(capture_id=capture.id, user_id=owner).count() == 1
+    finally:
+        editor_db.close()
+        chat_db.close()
 
 
 def test_bangkok_day_groups_utc_midnight_crossing_entries(db_session):

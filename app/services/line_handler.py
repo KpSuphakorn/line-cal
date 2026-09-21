@@ -26,7 +26,6 @@ from linebot.v3.webhooks import (
     PostbackEvent,
     FollowEvent
 )
-from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -39,7 +38,13 @@ from app.services.fitness import (
 from app.services.workouts import create_cardio_session, create_strength_session, list_cardio_presets, list_programs
 from app.services.ai_vision import analyze_food_image
 from app.services.ai_chat import parse_food_text
-from app.services.food_capture import create_capture, serialize_capture, ai_quota_remaining, confirm_capture, get_capture, _expired
+from app.services.food_capture import (
+    create_capture,
+    serialize_capture,
+    ai_quota_remaining,
+    confirm_capture_result,
+    cancel_capture_result,
+)
 from app.templates.flex_cards import (
     create_food_analyzed_card,
     create_daily_dashboard_card,
@@ -111,6 +116,13 @@ def reply_webapp(messaging_api: MessagingApi, reply_token: str, tab: str, label:
         "กดปุ่มด้านล่างเพื่อเปิด",
         quick_reply=QuickReply(items=[QuickReplyItem(action=URIAction(label=label, uri=uri))]),
     )
+
+
+def reply_today_status(messaging_api: MessagingApi, reply_token: str, text: str) -> None:
+    """Keep a status message and the authenticated Today entry point together."""
+    uri = webapp_uri("today")
+    quick_reply = QuickReply(items=[QuickReplyItem(action=URIAction(label="เปิดวันนี้", uri=uri))]) if uri else None
+    reply_text(messaging_api, reply_token, text, quick_reply=quick_reply)
 
 
 def reply_messages(messaging_api: MessagingApi, reply_token: str, messages: list):
@@ -344,23 +356,44 @@ def handle_postback_event(event: PostbackEvent, user_id: str, messaging_api: Mes
             return
         token = query_params.get("capture_token", "").strip()
         if not token:
-            reply_text(messaging_api, event.reply_token, "รายการอาหารหมดอายุหรือไม่พร้อมยืนยันแล้วครับ")
+            reply_text(messaging_api, event.reply_token, "ไม่พบรายการอาหารหรือรายการนี้ไม่พร้อมใช้งานแล้วครับ")
             return
-        try:
-            capture = get_capture(db, user_id, token)
-            expired = capture.status == "draft" and _expired(capture.expires_at)
-            entries = confirm_capture(db, user_id, token)
-        except HTTPException:
+        result = confirm_capture_result(db, user_id, token)
+        if result.status == "confirmed":
+            reply_text(messaging_api, event.reply_token, f"ยืนยันรายการอาหารแล้ว {len(result.entries)} รายการครับ")
+        elif result.status == "already_confirmed":
+            reply_today_status(
+                messaging_api,
+                event.reply_token,
+                "รายการอาหารนี้ยืนยันไปแล้ว และแก้ไขรายการร่างไม่ได้แล้วครับ หากต้องการแก้ไข ให้เปิดหน้า วันนี้",
+            )
+        elif result.status == "expired":
+            reply_text(messaging_api, event.reply_token, "รายการอาหารหมดอายุแล้วครับ กรุณาส่งรายการใหม่อีกครั้ง")
+        elif result.status == "cancelled":
+            reply_text(messaging_api, event.reply_token, "รายการอาหารนี้ถูกยกเลิกแล้วครับ")
+        else:
             # Owner-scoped lookup intentionally gives the same safe response
             # for missing and cross-user tokens.
-            reply_text(messaging_api, event.reply_token, "รายการอาหารหมดอายุหรือไม่พร้อมยืนยันแล้วครับ")
+            reply_text(messaging_api, event.reply_token, "ไม่พบรายการอาหารหรือรายการนี้ไม่พร้อมใช้งานแล้วครับ")
+
+    elif action == "cancel_food_capture_chat":
+        if not require_completed_profile(db, user_id, messaging_api, event.reply_token):
             return
-        if entries:
-            reply_text(messaging_api, event.reply_token, f"ยืนยันรายการอาหารแล้ว {len(entries)} รายการครับ")
-        elif expired:
-            reply_text(messaging_api, event.reply_token, "รายการอาหารหมดอายุแล้วครับ กรุณาส่งรายการใหม่อีกครั้ง")
+        token = query_params.get("capture_token", "").strip()
+        if not token:
+            reply_text(messaging_api, event.reply_token, "ไม่พบรายการอาหารหรือรายการนี้ไม่พร้อมใช้งานแล้วครับ")
+            return
+        result = cancel_capture_result(db, user_id, token)
+        if result.status == "cancelled":
+            reply_text(messaging_api, event.reply_token, "ยกเลิกรายการอาหารแล้วครับ")
+        elif result.status == "already_cancelled":
+            reply_text(messaging_api, event.reply_token, "รายการอาหารนี้ถูกยกเลิกไปแล้วครับ")
+        elif result.status == "confirmed":
+            reply_today_status(messaging_api, event.reply_token, "รายการอาหารนี้ยืนยันไปแล้ว จึงยกเลิกจากแชทไม่ได้ครับ")
+        elif result.status == "expired":
+            reply_text(messaging_api, event.reply_token, "รายการอาหารหมดอายุแล้วครับ จึงยกเลิกไม่ได้")
         else:
-            reply_text(messaging_api, event.reply_token, "รายการอาหารถูกยกเลิกหรือยืนยันไปแล้วครับ")
+            reply_text(messaging_api, event.reply_token, "ไม่พบรายการอาหารหรือรายการนี้ไม่พร้อมใช้งานแล้วครับ")
 
     elif action in {"confirm_food_capture", "cancel", "cancel_food_capture"}:
         # These actions belong to the retired chat-level food flow.  Never

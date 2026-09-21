@@ -1,4 +1,5 @@
 """Shared durable food-capture flow for LINE and the LIFF editor."""
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable
 from uuid import uuid4
@@ -12,6 +13,14 @@ from app.db.models import FoodAnalysisDraft, FoodCapture, FoodLog
 
 BANGKOK = ZoneInfo("Asia/Bangkok")
 CAPTURE_TTL = timedelta(hours=24)
+
+
+@dataclass(frozen=True)
+class CaptureActionResult:
+    """Outcome observed while holding the capture row lock."""
+
+    status: str
+    entries: list[FoodLog]
 
 
 def _expired(value: datetime | None) -> bool:
@@ -128,12 +137,34 @@ def get_capture(db: Session, user_id: str, token: str) -> FoodCapture:
     return capture
 
 
+def get_editable_capture(db: Session, user_id: str, token: str) -> FoodCapture:
+    """Return only a live draft for the authenticated LIFF editor."""
+    # Serialize the editor's expiry transition with confirm/cancel/update.
+    capture = _get_capture(db, user_id, token, lock=True)
+    if not capture:
+        raise HTTPException(status_code=404, detail="Food capture not found")
+    if capture.status != "draft":
+        raise HTTPException(status_code=409, detail="รายการอาหารนี้ยืนยันหรือยกเลิกไปแล้ว จึงแก้ไขรายการร่างไม่ได้")
+    if _expired(capture.expires_at):
+        capture.status = "cancelled"
+        capture.cancelled_at = datetime.now(timezone.utc)
+        db.commit()
+        raise HTTPException(status_code=410, detail="รายการอาหารหมดอายุแล้ว กรุณาส่งรายการใหม่อีกครั้ง")
+    return capture
+
+
 def update_capture(db: Session, user_id: str, token: str, items: list[dict[str, Any]]) -> FoodCapture:
-    capture = get_capture(db, user_id, token)
+    # Serialize LIFF edits with chat confirmation/cancellation on the parent
+    # capture row.  The lock must cover the expiry transition and draft
+    # replacement so a stale editor cannot mutate a terminal capture.
+    capture = _get_capture(db, user_id, token, lock=True)
+    if not capture:
+        raise HTTPException(status_code=404, detail="Food capture not found")
     if capture.status != "draft":
         raise HTTPException(status_code=409, detail="Food capture is no longer editable")
     if _expired(capture.expires_at):
         capture.status = "cancelled"
+        capture.cancelled_at = datetime.now(timezone.utc)
         db.commit()
         raise HTTPException(status_code=410, detail="Food capture expired")
     if not items:
@@ -146,19 +177,21 @@ def update_capture(db: Session, user_id: str, token: str, items: list[dict[str, 
     return capture
 
 
-def confirm_capture(db: Session, user_id: str, token: str) -> list[FoodLog]:
-    """Confirm once; a locked capture makes LINE redelivery/double taps idempotent."""
+def confirm_capture_result(db: Session, user_id: str, token: str) -> CaptureActionResult:
+    """Confirm at the lock boundary and retain whether this tap changed state."""
     capture = _get_capture(db, user_id, token, lock=True)
     if not capture:
-        return []
+        return CaptureActionResult("missing", [])
     if capture.status == "confirmed":
-        return db.query(FoodLog).filter(FoodLog.capture_id == capture.id, FoodLog.user_id == user_id).all()
+        entries = db.query(FoodLog).filter(FoodLog.capture_id == capture.id, FoodLog.user_id == user_id).all()
+        return CaptureActionResult("already_confirmed", entries)
     if capture.status != "draft":
-        return []
+        return CaptureActionResult("cancelled", [])
     if _expired(capture.expires_at):
         capture.status = "cancelled"
+        capture.cancelled_at = datetime.now(timezone.utc)
         db.commit()
-        return []
+        return CaptureActionResult("expired", [])
     now = datetime.now(timezone.utc)
     logs = [FoodLog(
         user_id=user_id,
@@ -175,21 +208,40 @@ def confirm_capture(db: Session, user_id: str, token: str) -> list[FoodLog]:
     capture.status = "confirmed"
     capture.confirmed_at = now
     db.commit()
-    return logs
+    return CaptureActionResult("confirmed", logs)
 
 
-def cancel_capture(db: Session, user_id: str, token: str) -> bool:
+def confirm_capture(db: Session, user_id: str, token: str) -> list[FoodLog]:
+    """Keep the API's idempotent list contract for existing callers."""
+    result = confirm_capture_result(db, user_id, token)
+    return result.entries if result.status in {"confirmed", "already_confirmed"} else []
+
+
+def cancel_capture_result(db: Session, user_id: str, token: str) -> CaptureActionResult:
+    """Cancel only a live draft and report the locked state to chat callers."""
     capture = _get_capture(db, user_id, token, lock=True)
     if not capture:
-        return False
+        return CaptureActionResult("missing", [])
     if capture.status == "confirmed":
-        return False
+        return CaptureActionResult("confirmed", [])
     if capture.status == "cancelled":
-        return True
+        return CaptureActionResult("already_cancelled", [])
+    if capture.status != "draft":
+        return CaptureActionResult("unavailable", [])
+    if _expired(capture.expires_at):
+        capture.status = "cancelled"
+        capture.cancelled_at = datetime.now(timezone.utc)
+        db.commit()
+        return CaptureActionResult("expired", [])
     capture.status = "cancelled"
     capture.cancelled_at = datetime.now(timezone.utc)
     db.commit()
-    return True
+    return CaptureActionResult("cancelled", [])
+
+
+def cancel_capture(db: Session, user_id: str, token: str) -> bool:
+    """Keep the API's existing boolean contract for callers outside chat."""
+    return cancel_capture_result(db, user_id, token).status in {"cancelled", "already_cancelled"}
 
 
 def ai_quota_remaining(db: Session, user_id: str) -> int:

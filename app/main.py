@@ -19,7 +19,7 @@ from app.services.fitness import (
     get_user_profile, update_user_profile, is_user_profile_customized, delete_user_account
 )
 from app.services.ai_vision import analyze_food_image
-from app.services.food_capture import get_capture, serialize_capture, update_capture, confirm_capture, cancel_capture, ai_quota_remaining
+from app.services.food_capture import get_editable_capture, serialize_capture, update_capture, confirm_capture, cancel_capture_result, ai_quota_remaining
 from app.templates.flex_cards import create_food_analyzed_card
 from app.services.workouts import (
     create_cardio_session,
@@ -463,7 +463,7 @@ def api_me_delete_food(food_id: int, db: Session = Depends(get_db), current_user
 def api_me_food_capture(token: str, db: Session = Depends(get_db), current_user: AuthenticatedUser = Depends(get_current_user)):
     """Return one authenticated user's editable multi-item food draft."""
     require_completed_profile(current_user.subject, db)
-    return serialize_capture(get_capture(db, current_user.subject, token))
+    return serialize_capture(get_editable_capture(db, current_user.subject, token))
 
 
 @app.put("/api/me/food-captures/{token}")
@@ -478,13 +478,18 @@ def api_me_confirm_food_capture(token: str, db: Session = Depends(get_db), curre
     require_completed_profile(current_user.subject, db)
     entries = confirm_capture(db, current_user.subject, token)
     if not entries:
-        raise HTTPException(status_code=409, detail="Food capture is expired, cancelled, or already unavailable")
+        raise HTTPException(status_code=409, detail="รายการอาหารหมดอายุ ถูกยกเลิก หรือไม่พร้อมยืนยันแล้วครับ")
     return {"status": "confirmed", "entry_ids": [entry.id for entry in entries]}
 
 
 @app.post("/api/me/food-captures/{token}/cancel")
 def api_me_cancel_food_capture(token: str, db: Session = Depends(get_db), current_user: AuthenticatedUser = Depends(get_current_user)):
     require_completed_profile(current_user.subject, db)
-    if not cancel_capture(db, current_user.subject, token):
-        raise HTTPException(status_code=409, detail="Food capture is already confirmed or unavailable")
-    return {"status": "cancelled"}
+    result = cancel_capture_result(db, current_user.subject, token)
+    if result.status in {"cancelled", "already_cancelled"}:
+        return {"status": "cancelled"}
+    if result.status == "expired":
+        raise HTTPException(status_code=410, detail="รายการอาหารหมดอายุแล้ว กรุณาส่งรายการใหม่อีกครั้ง")
+    if result.status == "confirmed":
+        raise HTTPException(status_code=409, detail="รายการอาหารยืนยันแล้ว จึงยกเลิกไม่ได้")
+    raise HTTPException(status_code=404, detail="ไม่พบรายการอาหารหรือรายการนี้ไม่พร้อมใช้งานแล้ว")

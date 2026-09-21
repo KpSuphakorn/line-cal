@@ -1,11 +1,13 @@
 """API Integration tests."""
 import io
+from datetime import datetime, timedelta, timezone
 import pytest
 from PIL import Image
 from fastapi.testclient import TestClient
 from app.main import app
 from app.db.database import init_db
 from app.auth import AuthenticatedUser, get_current_user
+from app.services.food_capture import create_capture
 
 # Initialize tables for tests
 init_db()
@@ -157,6 +159,9 @@ def test_webapp_dashboard_endpoint():
     assert "const PROFILE_REQUIRED_MESSAGE='กรุณาตั้งค่าโปรไฟล์ให้ครบก่อนเริ่มใช้งาน'" in response.text
     assert "if(!profileRequired())return" in response.text
     assert "async function loadCapture(captureToken){if(!profileRequired())return;" in response.text
+    assert "รายการอาหารนี้ยืนยันหรือยกเลิกไปแล้ว จึงแก้ไขไม่ได้" in response.text
+    assert "const cancelResponse=await api" in response.text
+    assert "if(!cancelResponse.ok){showToast(await apiError(cancelResponse));return}" in response.text
     assert "sessionResponse.status===409" in response.text
     assert "presetResponse.status===409" in response.text
     for emoji in ("📊", "📅", "🏋", "👤", "🍽", "🏃"):
@@ -180,6 +185,66 @@ def test_user_today_api(as_user):
     assert res_today.status_code == 200
     today_data = res_today.json()
     assert today_data["target_kcal"] == 2100.0
+
+
+def test_food_capture_api_keeps_confirm_idempotent_and_cancel_statuses(as_user):
+    from app.db.database import SessionLocal
+    from app.db.models import FoodLog
+
+    user_id = "capture-api-owner"
+    complete_profile(as_user, user_id)
+    db = SessionLocal()
+    capture = create_capture(db, user_id, "text", [{"food_name": "ข้าว", "calories": 400}])
+    token = capture.token
+    db.close()
+
+    first_confirm = client.post(f"/api/me/food-captures/{token}/confirm")
+    second_confirm = client.post(f"/api/me/food-captures/{token}/confirm")
+    assert first_confirm.status_code == second_confirm.status_code == 200
+    assert first_confirm.json()["entry_ids"] == second_confirm.json()["entry_ids"]
+
+    db = SessionLocal()
+    assert db.query(FoodLog).filter_by(user_id=user_id, capture_id=capture.id).count() == 1
+    db.close()
+
+    cancel_confirmed = client.post(f"/api/me/food-captures/{token}/cancel")
+    assert cancel_confirmed.status_code == 409
+    assert "ยืนยันแล้ว" in cancel_confirmed.json()["detail"]
+
+    db = SessionLocal()
+    cancelled = create_capture(db, user_id, "text", [{"food_name": "ไข่", "calories": 100}])
+    cancelled_token = cancelled.token
+    db.close()
+    assert client.post(f"/api/me/food-captures/{cancelled_token}/cancel").status_code == 200
+    assert client.post(f"/api/me/food-captures/{cancelled_token}/cancel").status_code == 200
+    assert client.get(f"/api/me/food-captures/{cancelled_token}").status_code == 409
+
+
+def test_food_capture_api_rejects_expired_and_cross_user_editor_access(as_user):
+    from app.db.database import SessionLocal
+
+    owner = "capture-editor-owner"
+    other = "capture-editor-other"
+    complete_profile(as_user, owner)
+    db = SessionLocal()
+    expired = create_capture(db, owner, "text", [{"food_name": "ข้าว", "calories": 400}])
+    expired.expires_at = datetime.now(timezone.utc) - timedelta(minutes=1)
+    db.commit()
+    expired_token = expired.token
+    cross_user = create_capture(db, owner, "text", [{"food_name": "แกง", "calories": 200}])
+    cross_token = cross_user.token
+    db.close()
+
+    assert client.get(f"/api/me/food-captures/{expired_token}").status_code == 410
+
+    complete_profile(as_user, other)
+    other_get = client.get(f"/api/me/food-captures/{cross_token}")
+    other_cancel = client.post(f"/api/me/food-captures/{cross_token}/cancel")
+    assert other_get.status_code == other_cancel.status_code == 404
+
+    db = SessionLocal()
+    assert db.query(type(cross_user)).filter_by(token=cross_token).one().status == "draft"
+    db.close()
 
 
 

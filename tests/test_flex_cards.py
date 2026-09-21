@@ -44,7 +44,7 @@ def test_food_analyzed_card_valid():
     assert "2 รายการ" in card_dict["header"]["contents"][0]["text"]
     footer_actions = [item["action"] for item in card_dict["footer"]["contents"]]
     assert any(action.get("label") == "✏️ แก้ไขรายการ" for action in footer_actions)
-    assert len(footer_actions) == 2
+    assert len(footer_actions) == 3
     assert any(
         action.get("type") == "postback"
         and "action=confirm_food_capture_chat" in action.get("data", "")
@@ -53,6 +53,12 @@ def test_food_analyzed_card_valid():
     )
     assert any(
         action.get("type") == "uri" and "capture_token=test_temp_id" in action.get("uri", "")
+        for action in footer_actions
+    )
+    assert any(
+        action.get("type") == "postback"
+        and "action=cancel_food_capture_chat" in action.get("data", "")
+        and "capture_token=test_temp_id" in action.get("data", "")
         for action in footer_actions
     )
 
