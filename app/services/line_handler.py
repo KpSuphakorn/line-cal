@@ -60,7 +60,7 @@ WELCOME_INTRO_TEXT = (
 WELCOME_FEATURES_TEXT = (
     "เริ่มใช้งาน\n\n"
     "ส่งรูปอาหาร หรือพิมพ์ กิน ตามด้วยชื่อเมนู เช่น กิน ข้าวมันไก่พิเศษ\n\n"
-    "พิมพ์ ออกกำลังกาย หรือ โปรแกรม เพื่อเลือกโปรแกรมและรายการคาร์ดิโอ\n\n"
+    "พิมพ์ เวท เพื่อเลือกโปรแกรมเวทและรายการคาร์ดิโอ\n\n"
     "พิมพ์ สรุป เพื่อดูข้อมูลวันนี้\n\n"
     "พิมพ์ ประวัติ เพื่อดูสถิติย้อนหลัง\n\n"
     "เปิดโปรไฟล์จากเมนูหลักเพื่อแก้ไขข้อมูลส่วนตัวและเป้าหมาย"
@@ -268,7 +268,7 @@ def handle_text_message(event: MessageEvent, user_id: str, messaging_api: Messag
         reply_webapp(messaging_api, event.reply_token, "history", "เปิดประวัติ")
         return
 
-    if text in {"ออกกำลังกาย", "โปรแกรม", "exercise", "workout"}:
+    if text == "เวท":
         if not require_completed_profile(db, user_id, messaging_api, event.reply_token):
             return
         reply_flex(

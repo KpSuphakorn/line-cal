@@ -82,6 +82,9 @@ def test_daily_dashboard_card_valid():
     assert container.type == "bubble"
     assert "วันนี้" in card_dict["header"]["contents"][0]["text"]
     assert "tab=history" in str(card_dict)
+    footer_labels = {item["action"]["label"] for item in card_dict["footer"]["contents"]}
+    assert "เวท" in footer_labels
+    assert "ออกกำลังกาย" not in footer_labels
 
 
 def test_workout_splits_carousel_valid():
@@ -102,8 +105,8 @@ def test_workout_splits_carousel_valid():
     carousel_dict = create_workout_splits_carousel(programs)
     container = FlexContainer.from_dict(carousel_dict)
     assert container.type == "carousel"
-    assert len(carousel_dict["contents"]) == 4
-    assert carousel_dict["contents"][-1]["header"]["contents"][0]["text"] == "คาร์ดิโอ"
+    assert len(carousel_dict["contents"]) == 3
+    assert "จัดการรายการคาร์ดิโอ" not in str(carousel_dict)
     assert "action=log_workout&program_id=1" in str(carousel_dict)
     assert "cardio=1" not in str(carousel_dict)
 
@@ -128,11 +131,11 @@ def test_workout_splits_carousel_includes_owned_cardio_presets():
     assert "action=log_cardio_preset&preset_id=8" in str(carousel_dict)
 
 
-def test_workout_splits_carousel_reserves_cardio_management_with_many_programs():
+def test_workout_splits_carousel_caps_saved_cards_and_prioritizes_cardio():
     programs = [{"id": index, "name": f"โปรแกรม {index}", "exercises": []} for index in range(1, 14)]
     strength_only = create_workout_splits_carousel(programs)
     assert len(strength_only["contents"]) == 12
-    assert strength_only["contents"][-1]["header"]["contents"][0]["text"] == "คาร์ดิโอ"
+    assert strength_only["contents"][-1]["header"]["contents"][0]["text"] == "โปรแกรม 12"
 
     carousel_dict = create_workout_splits_carousel(
         programs,
@@ -146,8 +149,42 @@ def test_workout_splits_carousel_reserves_cardio_management_with_many_programs()
 
     contents = carousel_dict["contents"]
     assert len(contents) == 12
-    assert contents[-1]["header"]["contents"][0]["text"] == "คาร์ดิโอ"
+    assert contents[-1]["header"]["contents"][0]["text"] == "เดินชัน"
     assert "action=log_cardio_preset&preset_id=99" in str(carousel_dict)
+    assert "action=log_workout&program_id=11" in str(carousel_dict)
+    assert "action=log_workout&program_id=12" not in str(carousel_dict)
+    assert "จัดการรายการคาร์ดิโอ" not in str(carousel_dict)
+
+
+def test_workout_splits_carousel_empty_state_is_valid_and_optional_link():
+    carousel_dict = create_workout_splits_carousel([])
+
+    assert FlexContainer.from_dict(carousel_dict).type == "carousel"
+    assert len(carousel_dict["contents"]) == 1
+    assert "ยังไม่มีโปรแกรมออกกำลังกาย" in str(carousel_dict)
+    assert "tab=programs" in str(carousel_dict)
+
+
+def test_workout_splits_carousel_empty_state_omits_link_when_unconfigured(monkeypatch):
+    monkeypatch.setattr(settings, "LIFF_ID", None)
+    monkeypatch.setattr(settings, "APP_ENV", "production")
+    monkeypatch.setattr(settings, "WEBAPP_BASE_URL", "")
+
+    carousel_dict = create_workout_splits_carousel([])
+
+    assert FlexContainer.from_dict(carousel_dict).type == "carousel"
+    assert '"type": "uri"' not in str(carousel_dict)
+
+
+def test_workout_splits_saved_cards_share_log_and_edit_actions():
+    carousel_dict = create_workout_splits_carousel(
+        [{"id": 1, "name": "Push", "exercises": []}],
+        cardio_presets=[{"id": 2, "name": "เดิน", "activity": "เดิน", "duration_min": 20}],
+    )
+
+    for bubble in carousel_dict["contents"]:
+        labels = {item["action"].get("label") for item in bubble["footer"]["contents"]}
+        assert labels == {"บันทึกวันนี้", "แก้ไขในเว็บ"}
 
 
 def test_workout_logged_card_valid():
@@ -176,7 +213,8 @@ def test_welcome_guide_card_valid():
     container = FlexContainer.from_dict(card_dict)
     assert container.type == "bubble"
     assert "กิน" in str(card_dict)
-    assert "ออกกำลังกาย" in str(card_dict)
+    assert "พิมพ์ เวท" in str(card_dict)
+    assert "พิมพ์ ออกกำลังกาย" not in str(card_dict)
 
 
 def test_profile_cards_valid():

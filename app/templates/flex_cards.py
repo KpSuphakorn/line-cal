@@ -91,7 +91,7 @@ def create_daily_dashboard_card(summary: Dict[str, Any], last_food_id: int | Non
     rows = [{"type": "text", "text": f"🍽️ อาหาร {eaten} / {target} kcal", "size": "sm", "color": "#334155"}, {"type": "text", "text": f"🏃 ออกกำลังประมาณ {burned} kcal", "size": "sm", "color": "#166534"}, {"type": "text", "text": f"🧮 สุทธิข้อมูล {eaten - burned} kcal", "size": "sm", "color": "#1E40AF"}, {"type": "separator"}, {"type": "text", "text": f"โปรตีน {int(summary.get('protein', 0))}/{int(summary.get('target_protein', 0))}g • คาร์บ {int(summary.get('carbs', 0))}g • ไขมัน {int(summary.get('fat', 0))}g", "size": "xs", "color": "#475569", "wrap": True}]
     for food in summary.get("food_logs", [])[:5]:
         rows.append({"type": "text", "text": f"• {food.get('time', '')} {food.get('name', '')} — {int(food.get('calories', 0))} kcal", "size": "xs", "color": "#374151", "wrap": True})
-    footer = [button for button in (_uri_button("วันนี้", "today"), _uri_button("ออกกำลังกาย", "programs"), _uri_button("ประวัติ", "history")) if button]
+    footer = [button for button in (_uri_button("วันนี้", "today"), _uri_button("เวท", "programs"), _uri_button("ประวัติ", "history")) if button]
     return _bubble(f"📊 สรุปวันนี้ {summary.get('date_display', '')}", rows, footer)
 
 
@@ -107,12 +107,10 @@ def create_workout_splits_carousel(
         cardio_presets = list(cardio_presets.values())
     programs = list(programs or [])
     cardio_presets = list(cardio_presets or [])
-    manage_uri = webapp_uri("programs")
     max_contents = 12
-    available = max_contents - (1 if manage_uri else 0)
     # Keep cardio presets visible when the user has many strength programs.
-    selected_presets = cardio_presets[:available]
-    selected_programs = programs[:max(0, available - len(selected_presets))]
+    selected_presets = cardio_presets[:max_contents]
+    selected_programs = programs[:max(0, max_contents - len(selected_presets))]
     bubbles = []
     for program in selected_programs:
         rows = [{"type": "text", "text": f"• {exercise.get('name', '')} — {exercise.get('sets', 0)} เซ็ต × {exercise.get('repetitions', 0)} ครั้ง", "size": "xs", "color": "#334155", "wrap": True} for exercise in (program.get("exercises") or [])[:8]]
@@ -141,8 +139,13 @@ def create_workout_splits_carousel(
         if edit_uri:
             footer.append(_button("แก้ไขในเว็บ", {"type": "uri", "uri": edit_uri}))
         bubbles.append(_bubble(str(preset.get("name") or activity), rows, footer, "#047857"))
-    if manage_uri:
-        bubbles.append(_bubble("คาร์ดิโอ", [{"type": "text", "text": "สร้าง แก้ไข หรือลบรายการคาร์ดิโอของคุณ", "size": "sm", "color": "#475569", "wrap": True}], [_button("จัดการรายการคาร์ดิโอ", {"type": "uri", "uri": manage_uri}, "primary")], "#047857"))
+    if not bubbles:
+        footer = [button for button in (_uri_button("เปิดโปรแกรม", "programs"),) if button]
+        bubbles.append(_bubble(
+            "ยังไม่มีโปรแกรมออกกำลังกาย",
+            [{"type": "text", "text": "สร้างโปรแกรมเวทหรือคาร์ดิโอในเว็บเพื่อเริ่มบันทึกวันนี้", "size": "sm", "color": "#475569", "wrap": True}],
+            footer,
+        ))
     return {"type": "carousel", "contents": bubbles[:12]}
 
 
@@ -152,8 +155,8 @@ def create_workout_logged_card(title: str, burned_kcal: float, remaining_kcal: f
 
 
 def create_welcome_guide_card(user_id: str = "") -> Dict[str, Any]:
-    rows = [{"type": "text", "text": "ส่งรูปอาหาร หรือพิมพ์ กิน ตามด้วยชื่อเมนู เช่น กิน ข้าวมันไก่พิเศษ", "size": "sm", "color": "#334155", "wrap": True}, {"type": "text", "text": "พิมพ์ สรุป เพื่อดูข้อมูลวันนี้", "size": "sm", "color": "#334155"}, {"type": "text", "text": "พิมพ์ ออกกำลังกาย หรือ โปรแกรม เพื่อเลือกโปรแกรมและรายการคาร์ดิโอ", "size": "sm", "color": "#334155", "wrap": True}, {"type": "text", "text": "พิมพ์ ประวัติ เพื่อดูสถิติย้อนหลัง", "size": "sm", "color": "#334155"}]
-    footer = [button for button in (_uri_button("วันนี้", "today"), _uri_button("ออกกำลังกาย", "programs"), _uri_button("ประวัติ", "history")) if button]
+    rows = [{"type": "text", "text": "ส่งรูปอาหาร หรือพิมพ์ กิน ตามด้วยชื่อเมนู เช่น กิน ข้าวมันไก่พิเศษ", "size": "sm", "color": "#334155", "wrap": True}, {"type": "text", "text": "พิมพ์ สรุป เพื่อดูข้อมูลวันนี้", "size": "sm", "color": "#334155"}, {"type": "text", "text": "พิมพ์ เวท เพื่อเลือกโปรแกรมเวทและรายการคาร์ดิโอ", "size": "sm", "color": "#334155", "wrap": True}, {"type": "text", "text": "พิมพ์ ประวัติ เพื่อดูสถิติย้อนหลัง", "size": "sm", "color": "#334155"}]
+    footer = [button for button in (_uri_button("วันนี้", "today"), _uri_button("เวท", "programs"), _uri_button("ประวัติ", "history")) if button]
     return _bubble("วิธีใช้ LINE Cal", rows, footer)
 
 

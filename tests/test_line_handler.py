@@ -125,6 +125,51 @@ def test_greeting_command(mock_get_clients):
 def test_welcome_copy_uses_simple_food_command():
     assert "กิน ตามด้วยชื่อเมนู" in WELCOME_FEATURES_TEXT
     assert "เพื่อเข้าสู่ flow เดียวกับการถ่ายรูป" not in WELCOME_FEATURES_TEXT
+    assert "พิมพ์ เวท" in WELCOME_FEATURES_TEXT
+    assert "พิมพ์ ออกกำลังกาย" not in WELCOME_FEATURES_TEXT
+
+
+@pytest.mark.parametrize("command", ["ออกกำลังกาย", "โปรแกรม", "exercise", "workout"])
+@patch("app.services.line_handler.reply_flex")
+@patch("app.services.line_handler.get_line_clients")
+def test_legacy_workout_commands_route_to_guide(mock_get_clients, mock_reply_flex, command):
+    mock_get_clients.return_value = (MagicMock(), MagicMock(), MagicMock())
+    db = get_test_db()
+    event = MagicMock(spec=MessageEvent)
+    event.reply_token = "reply_tok_legacy_workout"
+    event.source = MagicMock()
+    event.source.user_id = "legacy-workout-user"
+    event.message = MagicMock(spec=TextMessageContent)
+    event.message.text = command
+
+    handle_line_events([event], db)
+
+    mock_reply_flex.assert_called_once()
+    assert mock_reply_flex.call_args.args[2] == "วิธีใช้ LINE Cal"
+    assert "เวท" in str(mock_reply_flex.call_args.args[3])
+
+
+@patch("app.services.line_handler.reply_flex")
+@patch("app.services.line_handler.require_completed_profile", return_value=True)
+@patch("app.services.line_handler.get_line_clients")
+def test_thai_workout_command_opens_saved_programs(mock_get_clients, _profile, mock_reply_flex):
+    mock_get_clients.return_value = (MagicMock(), MagicMock(), MagicMock())
+    db = get_test_db()
+    event = MagicMock(spec=MessageEvent)
+    event.reply_token = "reply_tok_thai_workout"
+    event.source = MagicMock()
+    event.source.user_id = "thai-workout-user"
+    event.message = MagicMock(spec=TextMessageContent)
+    event.message.text = "เวท"
+
+    with patch("app.services.line_handler.list_programs", return_value=[]), patch(
+        "app.services.line_handler.list_cardio_presets", return_value=[]
+    ):
+        handle_line_events([event], db)
+
+    mock_reply_flex.assert_called_once()
+    assert mock_reply_flex.call_args.args[2] == "โปรแกรมออกกำลังกายของคุณ"
+    assert "ยังไม่มีโปรแกรมออกกำลังกาย" in str(mock_reply_flex.call_args.args[3])
 
 
 @patch("app.services.line_handler.reply_webapp")

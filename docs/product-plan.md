@@ -50,7 +50,7 @@ source type and AI metadata, not the image bytes.
 
 ### 3. Strength workout
 
-1. The user sends `ออกกำลังกาย` or taps Exercise in the Rich Menu.
+1. The user sends `เวท` or taps เวท in the Rich Menu.
 2. A card shows the user's Push, Pull, Legs and custom programs plus Cardio.
 3. Selecting a strength program immediately records a Workout Session snapshot.
 4. The user may edit the recorded exercises afterward without changing the
@@ -87,7 +87,7 @@ rest. The final calorie estimate remains editable.
 ### 4. Cardio
 
 Cardio uses the same reusable-program flow as strength. The user creates a
-cardio preset once, then selects that saved preset from the Exercise entry
+cardio preset once, then selects that saved preset from the `เวท` entry
 point to record a session. Presets are named after the activity and contain
 only the fields needed for that activity, such as duration, incline and speed
 for incline walking or duration and pace/distance for running. Calories use the
@@ -113,8 +113,7 @@ as “earned calories” or “you can eat more”.
 | Food image | Create one or more editable food analysis drafts |
 | `กิน <description>` | Enter the same draft flow as a food image |
 | `สรุป` | Show today's food, exercise and net summary |
-| `ออกกำลังกาย` | Show strength programs and saved cardio presets in one card, with a link to manage cardio presets |
-| `โปรแกรม` | Alias of `ออกกำลังกาย` |
+| `เวท` | Show saved strength programs and cardio presets as individual cards |
 | `ประวัติ` | Open LIFF History |
 | `วิธีใช้` | Show only the supported commands |
 
@@ -141,7 +140,7 @@ Use a single 3×2 default menu:
 
 1. Camera
 2. Today
-3. Exercise
+3. เวท
 4. History
 5. Profile
 6. Help
@@ -168,7 +167,7 @@ Delete these product surfaces rather than maintaining aliases:
   adapter.
 
 Keep one command-guide card because users need to discover `กิน`, `สรุป` and
-`ออกกำลังกาย`.
+`เวท`.
 
 ## Relational data model
 

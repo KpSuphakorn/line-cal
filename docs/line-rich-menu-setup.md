@@ -34,7 +34,7 @@ matches the template dimensions.
 Suggested labels:
 
 ```text
-Camera | Today | Exercise
+Camera | Today | เวท
 History | Profile | Help
 ```
 
@@ -47,7 +47,7 @@ phone. Rich menus are not displayed in LINE for PC.
 | --- | --- |
 | Camera | Open `https://line.me/R/nv/camera/` |
 | Today | Open `https://liff.line.me/<LIFF_ID>?tab=today` |
-| Exercise | Send message `ออกกำลังกาย` |
+| เวท | Send message `เวท` |
 | History | Open `https://liff.line.me/<LIFF_ID>?tab=history` |
 | Profile | Open `https://liff.line.me/<LIFF_ID>?tab=profile` |
 | Help | Send message `วิธีใช้` |
