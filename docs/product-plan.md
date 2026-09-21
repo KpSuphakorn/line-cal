@@ -31,9 +31,12 @@ Both entry points share one flow:
 
 - Send a food image.
 - Send `กิน <description>`, for example `กิน ข้าวมันไก่ไม่เอาหนัง`.
+- Separate typed items with `+`, for example `กิน ข้าวมันไก่ + น้ำส้ม`.
 
-The AI returns one or more independent food analysis drafts. A single photo may
-produce several entries such as rice, chicken, egg and a drink. The response
+A capture holds one or more independent food analysis drafts. A photo is split
+by what the AI sees, so one plate may produce rice, chicken, egg and a drink.
+Typed text is split only where the user wrote `+`: one dish stays one draft,
+named as typed, rather than being broken into its components. The response
 offers:
 
 - Edit items in LIFF.

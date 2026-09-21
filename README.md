@@ -38,7 +38,7 @@ flowchart TD
     LineGateway -->|Secure Webhook with HMAC-SHA256 Signature| FastAPIServer[Backend: FastAPI Service]
 
     subgraph Core Logic Engines
-        FastAPIServer --> AICalEngine[AI Vision Engine\nGemini 2.0 / 1.5 Flash]
+        FastAPIServer --> AICalEngine[AI Vision & Text Engine\nGemini Flash]
         FastAPIServer --> FitnessEngine[BMR / TDEE & METs Energy Calculator]
         FastAPIServer --> FlexGenerator[LINE Flex Message Card Generator]
     end
@@ -80,7 +80,7 @@ flowchart TD
 |---|---|
 | 📸 **ส่งรูปภาพอาหาร** | AI วิเคราะห์ชื่ออาหาร, แคลอรี, โปรตีน/คาร์บ/ไขมัน พร้อมการ์ดกดยืนยันบันทึก |
 | `สรุป` | ดูสรุปอาหารและการออกกำลังกายวันนี้ |
-| `กิน <รายการอาหาร>` | ให้ AI เสนอรายการอาหารเพื่อแก้ไขและยืนยันก่อนบันทึก |
+| `กิน <รายการอาหาร>` | ให้ AI เสนอรายการอาหารเพื่อแก้ไขและยืนยันก่อนบันทึก หนึ่งจานคือหนึ่งรายการ คั่นด้วย `+` เมื่อกินหลายอย่าง เช่น `กิน ข้าวมันไก่ + น้ำส้ม` |
 | `เวท` | เลือกโปรแกรมเวทหรือ Cardio |
 | `ประวัติ` | เปิดปฏิทินและรายละเอียดรายการย้อนหลังใน LIFF Web App |
 | `วิธีใช้` | ดูคำสั่งที่รองรับ |
