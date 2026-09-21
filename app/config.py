@@ -89,6 +89,7 @@ def validate_production_settings() -> None:
         "LINE_LOGIN_CHANNEL_ID": settings.LINE_LOGIN_CHANNEL_ID,
         "LIFF_ID": settings.LIFF_ID,
         "WEBAPP_BASE_URL": settings.WEBAPP_BASE_URL,
+        "GEMINI_API_KEY": settings.GEMINI_API_KEY,
     }
     missing = [name for name, value in required.items() if not value or str(value).startswith("mock_")]
     if missing:

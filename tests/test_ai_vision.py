@@ -1,26 +1,24 @@
-"""Unit tests for AI chat food parser."""
+"""Unit tests for AI vision food analyzer."""
+import sys
+
 import pytest
 
 from app.config import settings
-from app.services.ai_chat import parse_food_text
 from app.services.ai_errors import FoodAnalysisError
+from app.services.ai_vision import analyze_food_image
 
 
-def test_parse_food_text_fallback():
+def test_analyze_food_image_mock_fallback():
     """Without a real API key, dev/test mock mode returns a labeled estimate."""
-    res = parse_food_text("กิน ข้าวมันไก่ต้ม")
+    res = analyze_food_image(b"not-a-real-image")
     assert isinstance(res["items"], list)
-    assert len(res["items"]) == 1
+    assert len(res["items"]) >= 1
     item = res["items"][0]
-    assert item["food_name"] == "ข้าวมันไก่ต้ม"
     assert item["calories"] > 0
-    assert item["protein"] >= 0
-    assert item["carbs"] >= 0
-    assert item["fat"] >= 0
 
 
-def test_parse_food_text_raises_on_real_api_failure(monkeypatch):
-    """A genuine Gemini failure must surface as an error, never a fabricated answer."""
+def test_analyze_food_image_raises_on_real_api_failure(monkeypatch):
+    """A genuine Gemini Vision failure must surface as an error, never a fabricated answer."""
     monkeypatch.setattr(settings, "GEMINI_API_KEY", "genuine-real-api-key")
 
     class _BoomModel:
@@ -36,7 +34,7 @@ def test_parse_food_text_raises_on_real_api_failure(monkeypatch):
         def GenerativeModel(*args, **kwargs):
             return _BoomModel()
 
-    monkeypatch.setitem(__import__("sys").modules, "google.generativeai", _BoomGenAI())
+    monkeypatch.setitem(sys.modules, "google.generativeai", _BoomGenAI())
 
     with pytest.raises(FoodAnalysisError):
-        parse_food_text("กิน ข้าวมันไก่ต้ม")
+        analyze_food_image(b"not-a-real-image")

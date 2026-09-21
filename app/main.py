@@ -19,6 +19,7 @@ from app.services.fitness import (
     get_user_profile, update_user_profile, is_user_profile_customized, delete_user_account
 )
 from app.services.ai_vision import analyze_food_image
+from app.services.ai_errors import FoodAnalysisError
 from app.services.food_capture import get_editable_capture, serialize_capture, update_capture, confirm_capture, cancel_capture_result, ai_quota_remaining
 from app.templates.flex_cards import create_food_analyzed_card
 from app.services.workouts import (
@@ -134,7 +135,10 @@ async def simulate_analyze_food(
     contents = await file.read(settings.MAX_UPLOAD_BYTES + 1)
     if len(contents) > settings.MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=413, detail="Image is too large")
-    food_data = analyze_food_image(contents)
+    try:
+        food_data = analyze_food_image(contents)
+    except FoodAnalysisError as exc:
+        raise HTTPException(status_code=502, detail="ไม่สามารถวิเคราะห์รายการอาหารได้ กรุณาลองใหม่อีกครั้ง") from exc
     flex_preview = create_food_analyzed_card(food_data, "test_id_123")
 
     return {

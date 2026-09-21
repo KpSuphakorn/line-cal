@@ -2,6 +2,7 @@
 from datetime import datetime, timezone
 from typing import Any, Iterable
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from app.config import settings
@@ -234,6 +235,17 @@ def _owned_session(db: Session, user_id: str, session_id: int) -> WorkoutSession
     )
 
 
+def _existing_session_by_source_event(
+    db: Session, user_id: str, source_event_id: str | None
+) -> WorkoutSession | None:
+    if not source_event_id:
+        return None
+    return db.query(WorkoutSession).filter(
+        WorkoutSession.user_id == user_id,
+        WorkoutSession.source_event_id == source_event_id,
+    ).first()
+
+
 def create_strength_session(
     db: Session,
     user_id: str,
@@ -241,13 +253,9 @@ def create_strength_session(
     source_event_id: str | None = None,
     occurred_at: datetime | None = None,
 ) -> WorkoutSession:
-    if source_event_id:
-        existing = db.query(WorkoutSession).filter(
-            WorkoutSession.user_id == user_id,
-            WorkoutSession.source_event_id == source_event_id,
-        ).first()
-        if existing:
-            return existing
+    existing = _existing_session_by_source_event(db, user_id, source_event_id)
+    if existing:
+        return existing
     user = db.query(User).filter(User.id == user_id).first()
     if not user or not is_user_profile_customized(user):
         raise PermissionError("Complete your profile before logging exercise")
@@ -269,18 +277,25 @@ def create_strength_session(
         occurred_at=occurred_at or datetime.now(timezone.utc),
     )
     db.add(session)
-    db.flush()
-    for index, exercise in enumerate(exercises, 1):
-        db.add(SessionExercise(
-            session_id=session.id,
-            name=exercise.name,
-            sets=exercise.sets,
-            repetitions=exercise.repetitions,
-            weight=exercise.weight,
-            notes=exercise.notes,
-            order_num=index,
-        ))
-    db.commit()
+    try:
+        db.flush()
+        for index, exercise in enumerate(exercises, 1):
+            db.add(SessionExercise(
+                session_id=session.id,
+                name=exercise.name,
+                sets=exercise.sets,
+                repetitions=exercise.repetitions,
+                weight=exercise.weight,
+                notes=exercise.notes,
+                order_num=index,
+            ))
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        existing = _existing_session_by_source_event(db, user_id, source_event_id)
+        if existing:
+            return existing
+        raise
     return _owned_session(db, user_id, session.id)
 
 
@@ -293,13 +308,9 @@ def create_cardio_session(
 ) -> WorkoutSession:
     if preset_id is None:
         raise ValueError("preset_id is required")
-    if source_event_id:
-        existing = db.query(WorkoutSession).filter(
-            WorkoutSession.user_id == user_id,
-            WorkoutSession.source_event_id == source_event_id,
-        ).first()
-        if existing:
-            return existing
+    existing = _existing_session_by_source_event(db, user_id, source_event_id)
+    if existing:
+        return existing
     user = db.query(User).filter(User.id == user_id).first()
     if not user or not is_user_profile_customized(user):
         raise PermissionError("Complete your profile before logging exercise")
@@ -336,7 +347,14 @@ def create_cardio_session(
         ),
     )
     db.add(session)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        existing = _existing_session_by_source_event(db, user_id, source_event_id)
+        if existing:
+            return existing
+        raise
     return _owned_session(db, user_id, session.id)
 
 

@@ -4,6 +4,7 @@ import logging
 from typing import Dict, Any
 
 from app.config import settings
+from app.services.ai_errors import FoodAnalysisError
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +81,7 @@ def parse_food_text(text: str) -> Dict[str, Any]:
 
     except Exception as e:
         logger.error(f"Error calling Gemini text food parse: {e}")
-        return _default_food_response(clean_text)
+        raise FoodAnalysisError("Gemini text food parse failed") from e
 
 
 def _default_food_response(food_name: str) -> Dict[str, Any]:

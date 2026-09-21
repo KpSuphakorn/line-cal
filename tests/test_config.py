@@ -37,11 +37,31 @@ def test_production_rejects_sqlite_database_url(monkeypatch):
         "LINE_LOGIN_CHANNEL_ID": "1234567890",
         "LIFF_ID": "1234567890-abcdef",
         "WEBAPP_BASE_URL": "https://example.test/webapp",
+        "GEMINI_API_KEY": "genuine-gemini-key",
     }
     for name, value in values.items():
         monkeypatch.setattr(settings, name, value)
 
     with pytest.raises(RuntimeError, match="DATABASE_URL.*PostgreSQL"):
+        validate_production_settings()
+
+
+def test_production_rejects_missing_or_mock_gemini_api_key(monkeypatch):
+    """A missing/mock Gemini key must not silently ship fabricated food analyses."""
+    values = {
+        "APP_ENV": "production",
+        "DATABASE_URL": "postgresql://user:pass@example.test/db",
+        "LINE_CHANNEL_SECRET": "line-secret",
+        "LINE_CHANNEL_ACCESS_TOKEN": "line-access-token",
+        "LINE_LOGIN_CHANNEL_ID": "1234567890",
+        "LIFF_ID": "1234567890-abcdef",
+        "WEBAPP_BASE_URL": "https://example.test/webapp",
+        "GEMINI_API_KEY": "mock_gemini_api_key",
+    }
+    for name, value in values.items():
+        monkeypatch.setattr(settings, name, value)
+
+    with pytest.raises(RuntimeError, match="GEMINI_API_KEY"):
         validate_production_settings()
 
 
@@ -78,6 +98,7 @@ def test_production_rejects_local_webapp_url(monkeypatch):
         "LINE_LOGIN_CHANNEL_ID": "1234567890",
         "LIFF_ID": "1234567890-abcdef",
         "WEBAPP_BASE_URL": "http://localhost:8000/webapp",
+        "GEMINI_API_KEY": "genuine-gemini-key",
     }
     for name, value in values.items():
         monkeypatch.setattr(settings, name, value)

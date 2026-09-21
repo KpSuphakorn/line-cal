@@ -2,6 +2,7 @@
 from datetime import datetime, date, time, timezone, timedelta
 from zoneinfo import ZoneInfo
 from typing import Dict, Any, List, Optional, Iterable
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from app.db.models import (
@@ -46,10 +47,17 @@ def estimate_strength_calories(weight_kg: float | None, duration_min: float, met
 
 
 def bangkok_day_bounds(target_date: date | None = None):
-    """Return UTC-naive bounds for a Bangkok calendar day (SQLite compatible)."""
+    """Return timezone-aware UTC bounds for a Bangkok calendar day.
+
+    Kept timezone-aware (not naive) so the comparison against
+    `DateTime(timezone=True)` columns is correct regardless of the
+    database session's timezone setting; a naive bound is interpreted
+    using the session's local TimeZone on Postgres, which silently
+    shifts "today" if that session default is ever not UTC.
+    """
     day = target_date or datetime.now(BANGKOK).date()
-    start = datetime.combine(day, time.min, tzinfo=BANGKOK).astimezone(timezone.utc).replace(tzinfo=None)
-    end = datetime.combine(day, time.max, tzinfo=BANGKOK).astimezone(timezone.utc).replace(tzinfo=None)
+    start = datetime.combine(day, time.min, tzinfo=BANGKOK).astimezone(timezone.utc)
+    end = datetime.combine(day, time.max, tzinfo=BANGKOK).astimezone(timezone.utc)
     return start, end
 
 
@@ -83,9 +91,13 @@ def seed_program_templates(db: Session) -> None:
     db.commit()
 
 
+def _existing_user_programs(db: Session, user_id: str) -> List[WorkoutProgram]:
+    return db.query(WorkoutProgram).filter(WorkoutProgram.user_id == user_id).all()
+
+
 def seed_user_programs_if_needed(db: Session, user_id: str) -> List[WorkoutProgram]:
     """Copy Push/Pull/Legs templates for a completed user, idempotently."""
-    existing = db.query(WorkoutProgram).filter(WorkoutProgram.user_id == user_id).all()
+    existing = _existing_user_programs(db, user_id)
     if existing:
         return existing
     user = db.query(User).filter(User.id == user_id).first()
@@ -94,27 +106,34 @@ def seed_user_programs_if_needed(db: Session, user_id: str) -> List[WorkoutProgr
 
     seed_program_templates(db)
     templates = db.query(ProgramTemplate).order_by(ProgramTemplate.id.asc()).all()
-    for template in templates:
-        program = WorkoutProgram(
-            user_id=user_id,
-            template_id=template.id,
-            source_key=template.key,
-            name=template.name,
-        )
-        db.add(program)
-        db.flush()
-        for exercise in sorted(template.exercises, key=lambda item: item.order_num):
-            db.add(ProgramExercise(
-                program_id=program.id,
-                name=exercise.name,
-                sets=exercise.sets,
-                repetitions=exercise.repetitions,
-                weight=exercise.weight,
-                notes=exercise.notes,
-                order_num=exercise.order_num,
-            ))
-    db.commit()
-    return db.query(WorkoutProgram).filter(WorkoutProgram.user_id == user_id).all()
+    try:
+        for template in templates:
+            program = WorkoutProgram(
+                user_id=user_id,
+                template_id=template.id,
+                source_key=template.key,
+                name=template.name,
+            )
+            db.add(program)
+            db.flush()
+            for exercise in sorted(template.exercises, key=lambda item: item.order_num):
+                db.add(ProgramExercise(
+                    program_id=program.id,
+                    name=exercise.name,
+                    sets=exercise.sets,
+                    repetitions=exercise.repetitions,
+                    weight=exercise.weight,
+                    notes=exercise.notes,
+                    order_num=exercise.order_num,
+                ))
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        existing = _existing_user_programs(db, user_id)
+        if existing:
+            return existing
+        raise
+    return _existing_user_programs(db, user_id)
 
 
 def get_user_programs(db: Session, user_id: str) -> Dict[str, Any]:

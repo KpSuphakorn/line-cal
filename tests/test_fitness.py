@@ -430,3 +430,93 @@ def test_history_summary_uses_bangkok_week_bounds(db_session):
     assert result["summary"]["average_daily_calories"] == 500
     assert result["summary"]["peak_day"]["calories_in"] == 500
     assert result["daily_breakdown"][-1]["calories_in"] == 500
+
+
+def test_create_strength_session_survives_concurrent_duplicate_source_event(db_session, monkeypatch):
+    """A race that slips past the pre-check must resolve via the unique constraint, not a 500."""
+    import app.services.workouts as workouts_module
+    from app.db.models import WorkoutSession
+
+    user_id = "strength-race-user"
+    complete_profile(db_session, user_id)
+    programs = get_user_programs(db_session, user_id)
+    push_id = next(program["id"] for program in programs.values() if program["name"] == "Push")
+
+    winner = create_strength_session(db_session, user_id, push_id, source_event_id="evt-strength-race")
+
+    real_lookup = workouts_module._existing_session_by_source_event
+    calls = {"n": 0}
+
+    def flaky_lookup(db, uid, source_event_id):
+        calls["n"] += 1
+        return None if calls["n"] == 1 else real_lookup(db, uid, source_event_id)
+
+    monkeypatch.setattr(workouts_module, "_existing_session_by_source_event", flaky_lookup)
+
+    loser = create_strength_session(db_session, user_id, push_id, source_event_id="evt-strength-race")
+
+    assert loser.id == winner.id
+    assert db_session.query(WorkoutSession).filter_by(
+        user_id=user_id, source_event_id="evt-strength-race"
+    ).count() == 1
+
+
+def test_create_cardio_session_survives_concurrent_duplicate_source_event(db_session, monkeypatch):
+    import app.services.workouts as workouts_module
+    from app.db.models import WorkoutSession
+
+    user_id = "cardio-race-user"
+    complete_profile(db_session, user_id)
+    preset = save_cardio_preset(db_session, user_id, {
+        "name": "เดินชัน",
+        "activity": "เดินชัน",
+        "duration_min": 40,
+    })
+
+    winner = create_cardio_session(db_session, user_id, preset_id=preset["id"], source_event_id="evt-cardio-race")
+
+    real_lookup = workouts_module._existing_session_by_source_event
+    calls = {"n": 0}
+
+    def flaky_lookup(db, uid, source_event_id):
+        calls["n"] += 1
+        return None if calls["n"] == 1 else real_lookup(db, uid, source_event_id)
+
+    monkeypatch.setattr(workouts_module, "_existing_session_by_source_event", flaky_lookup)
+
+    loser = create_cardio_session(db_session, user_id, preset_id=preset["id"], source_event_id="evt-cardio-race")
+
+    assert loser.id == winner.id
+    assert db_session.query(WorkoutSession).filter_by(
+        user_id=user_id, source_event_id="evt-cardio-race"
+    ).count() == 1
+
+
+def test_seed_user_programs_survives_concurrent_duplicate_seeding(db_session, monkeypatch):
+    """Two near-simultaneous first loads after onboarding must not 500 on the race."""
+    import app.services.fitness as fitness_module
+    from app.services.fitness import seed_user_programs_if_needed
+    from app.db.models import WorkoutProgram
+
+    user_id = "seed-race-user"
+    complete_profile(db_session, user_id)
+
+    winner = seed_user_programs_if_needed(db_session, user_id)
+    assert len(winner) == 3
+
+    # Undo the "programs already exist" fact for exactly one probe so the
+    # function proceeds to seed again, colliding with the templates it just
+    # created — the same shape as two concurrent first-ever requests.
+    real_lookup = fitness_module._existing_user_programs
+    calls = {"n": 0}
+
+    def flaky_lookup(db, uid):
+        calls["n"] += 1
+        return [] if calls["n"] == 1 else real_lookup(db, uid)
+
+    monkeypatch.setattr(fitness_module, "_existing_user_programs", flaky_lookup)
+
+    loser = seed_user_programs_if_needed(db_session, user_id)
+
+    assert {p.id for p in loser} == {p.id for p in winner}
+    assert db_session.query(WorkoutProgram).filter_by(user_id=user_id).count() == 3

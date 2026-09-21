@@ -6,6 +6,7 @@ from io import BytesIO
 from PIL import Image
 
 from app.config import settings
+from app.services.ai_errors import FoodAnalysisError
 
 logger = logging.getLogger(__name__)
 
@@ -84,12 +85,4 @@ def analyze_food_image(image_bytes: bytes) -> Dict[str, Any]:
 
     except Exception as e:
         logger.error(f"Error calling Gemini Vision: {e}")
-        return {"items": [{
-            "food_name": "อาหาร (ประมาณการทั่วไป)",
-            "portion": "1 จานมาตรฐาน",
-            "calories": 500.0,
-            "protein": 25.0,
-            "carbs": 60.0,
-            "fat": 15.0,
-            "notes": "AI ขัดข้องชั่วคราว ค่าประมาณนี้แก้ไขได้ก่อนยืนยัน"
-        }]}
+        raise FoodAnalysisError("Gemini vision analysis failed") from e

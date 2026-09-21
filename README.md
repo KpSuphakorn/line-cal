@@ -119,7 +119,7 @@ DATABASE_URL=sqlite:///./line_cal.db
 # ใช้ Direct connection (หรือ Session pooler 5432) สำหรับ Alembic migrations;
 # อย่าใช้ Transaction pooler 6543 ใน migration
 # Production also requires APP_ENV=production, LINE_LOGIN_CHANNEL_ID, LIFF_ID,
-# and WEBAPP_BASE_URL. Apply `alembic upgrade head` before starting the service.
+# WEBAPP_BASE_URL, and GEMINI_API_KEY. Apply `alembic upgrade head` before starting the service.
 ```
 
 ### 3. Run Locally

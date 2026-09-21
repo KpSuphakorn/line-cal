@@ -14,6 +14,12 @@ from app.db.models import FoodAnalysisDraft, FoodCapture, FoodLog
 BANGKOK = ZoneInfo("Asia/Bangkok")
 CAPTURE_TTL = timedelta(hours=24)
 
+# Match the bounds FoodUpdatePayload/FoodDraftItemPayload enforce in main.py so a
+# malformed AI response (e.g. calories: 1e30) can't reach the DB unclamped just
+# because draft creation never passes through those Pydantic models.
+MAX_CALORIES = 100000.0
+MAX_MACRO_GRAMS = 10000.0
+
 
 @dataclass(frozen=True)
 class CaptureActionResult:
@@ -48,10 +54,10 @@ def normalize_food_result(result: dict[str, Any] | None) -> list[dict[str, Any]]
         items.append({
             "food_name": name[:200],
             "portion": str(raw.get("portion") or "1 ที่")[:150],
-            "calories": max(0.0, float(raw.get("calories") or 0)),
-            "protein": max(0.0, float(raw.get("protein") or 0)),
-            "carbs": max(0.0, float(raw.get("carbs") or 0)),
-            "fat": max(0.0, float(raw.get("fat") or 0)),
+            "calories": min(MAX_CALORIES, max(0.0, float(raw.get("calories") or 0))),
+            "protein": min(MAX_MACRO_GRAMS, max(0.0, float(raw.get("protein") or 0))),
+            "carbs": min(MAX_MACRO_GRAMS, max(0.0, float(raw.get("carbs") or 0))),
+            "fat": min(MAX_MACRO_GRAMS, max(0.0, float(raw.get("fat") or 0))),
             "confidence": _optional_float(raw.get("confidence")),
             "notes": str(raw.get("notes") or "").strip()[:1000] or None,
         })
