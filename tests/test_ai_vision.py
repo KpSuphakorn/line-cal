@@ -6,7 +6,8 @@ import pytest
 from PIL import Image
 
 from app.config import settings
-from app.services.ai_errors import FOOD_MODELS, FoodAnalysisError
+from app.services import ai_errors
+from app.services.ai_errors import FoodAnalysisError
 from app.services.ai_vision import analyze_food_image
 
 
@@ -37,7 +38,8 @@ def test_analyze_food_image_raises_on_real_api_failure(monkeypatch, boom_genai):
 def test_analyze_food_image_falls_back_to_next_pinned_model_on_quota_error(monkeypatch, flaky_genai_factory):
     """A 429/quota failure on the first pinned model must retry the next one, not give up."""
     monkeypatch.setattr(settings, "GEMINI_API_KEY", "genuine-real-api-key")
-    genai = flaky_genai_factory(FOOD_MODELS[0], [{"food_name": "ไข่เจียว", "calories": 200}])
+    monkeypatch.setattr(ai_errors, "FOOD_MODELS", ("exhausted-model", "spare-model"))
+    genai = flaky_genai_factory("exhausted-model", [{"food_name": "ไข่เจียว", "calories": 200}])
     monkeypatch.setitem(sys.modules, "google.generativeai", genai)
 
     res = analyze_food_image(_tiny_png_bytes())
