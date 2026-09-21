@@ -8,7 +8,11 @@ from app.services.ai_errors import generate_food_json
 logger = logging.getLogger(__name__)
 
 # See ai_errors.generate_food_json for why these are pinned explicitly.
-FOOD_PARSE_MODELS = ("gemini-2.5-flash", "gemini-2.5-flash-lite")
+# Verified reachable with this account's key via a live generate_content call —
+# genai.list_models() alone is not reliable: it listed gemini-2.5-flash and
+# gemini-2.5-flash-lite as available, but both 404'd as "no longer available
+# to new users" when actually called.
+FOOD_PARSE_MODELS = ("gemini-3.6-flash", "gemini-3.5-flash-lite")
 
 FOOD_PARSE_PROMPT = """คุณเป็นนักโภชนาการ AI ผู้เชี่ยวชาญด้านอาหารไทยและอาหารสากล
 ผู้ใช้จะพิมพ์รายการอาหารที่กินเข้ามา จงแยกเป็นรายการอิสระหลายรายการเมื่อมีหลายเมนู
