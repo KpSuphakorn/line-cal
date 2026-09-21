@@ -12,6 +12,12 @@ from app.db.models import (
     TemplateExercise,
     WorkoutProgram,
     ProgramExercise,
+    CardioPreset,
+    FoodCapture,
+    FoodAnalysisDraft,
+    SessionExercise,
+    CardioDetails,
+    ProcessedWebhook,
 )
 from app.data.presets import PROGRAM_TEMPLATES
 from app.config import settings
@@ -722,6 +728,7 @@ def get_user_profile(db: Session, user_id: str) -> Dict[str, Any]:
             "target_protein_g": None,
             "target_carbs_g": None,
             "target_fat_g": None,
+            "targets_customized": False,
         }
     bmr = calculate_bmr(gender, weight, height, age)
     tdee = calculate_tdee(bmr, float(user.activity_level or 1.45))
@@ -740,7 +747,31 @@ def get_user_profile(db: Session, user_id: str) -> Dict[str, Any]:
         "daily_target_kcal": round(user.daily_target_kcal or 1950.0, 0),
         "target_protein_g": round(user.target_protein_g or 145.0, 0),
         "target_carbs_g": round(user.target_carbs_g or 220.0, 0),
-        "target_fat_g": round(user.target_fat_g or 55.0, 0)
+        "target_fat_g": round(user.target_fat_g or 55.0, 0),
+        "targets_customized": bool(user.targets_customized),
+    }
+
+
+def _calculate_nutrition_targets(user: User, activity_multiplier: float) -> Dict[str, float]:
+    bmr = calculate_bmr(user.gender, user.weight_kg, user.height_cm, user.age)
+    tdee = calculate_tdee(bmr, activity_multiplier)
+    goal = (user.goal or "").lower()
+    if "cut" in goal or "ลด" in goal:
+        target_kcal = round(tdee - 500, 0)
+    elif "bulk" in goal or "เพิ่ม" in goal:
+        target_kcal = round(tdee + 300, 0)
+    else:
+        target_kcal = round(tdee - 300, 0)
+
+    target_protein = round(user.weight_kg * 2.0, 0)
+    fat_cals = target_kcal * 0.25
+    target_fat = round(fat_cals / 9, 0)
+    carb_cals = max(0, target_kcal - (target_protein * 4) - fat_cals)
+    return {
+        "daily_target_kcal": target_kcal,
+        "target_protein_g": target_protein,
+        "target_carbs_g": round(carb_cals / 4, 0),
+        "target_fat_g": target_fat,
     }
 
 
@@ -749,6 +780,7 @@ def update_user_profile(db: Session, user_id: str, data: Dict[str, Any]) -> Dict
     from app.config import settings
     user = get_or_create_user(db, user_id, settings)
 
+    data = dict(data)
     if "name" in data and data["name"]:
         user.name = str(data["name"]).strip()
     if "gender" in data and data["gender"]:
@@ -770,7 +802,9 @@ def update_user_profile(db: Session, user_id: str, data: Dict[str, Any]) -> Dict
     if "activity_level" in data and data["activity_level"]:
         user.activity_level = str(data["activity_level"]).strip()
 
-    raw_activity = data.get("activity_multiplier", data.get("activity_level", user.activity_level or 1.45))
+    raw_activity = data.get("activity_multiplier")
+    if raw_activity is None:
+        raw_activity = data.get("activity_level", user.activity_level or 1.45)
     try:
         activity_mult = float(raw_activity)
     except (TypeError, ValueError):
@@ -784,40 +818,22 @@ def update_user_profile(db: Session, user_id: str, data: Dict[str, Any]) -> Dict
         db.commit()
         db.refresh(user)
         return get_user_profile(db, user_id)
-    bmr = calculate_bmr(user.gender, user.weight_kg, user.height_cm, user.age)
-    tdee = calculate_tdee(bmr, activity_mult)
-
-    goal = (user.goal or "").lower()
-    if "cut" in goal or "ลด" in goal:
-        target_kcal = round(tdee - 500, 0)
-    elif "bulk" in goal or "เพิ่ม" in goal:
-        target_kcal = round(tdee + 300, 0)
-    else:
-        target_kcal = round(tdee - 300, 0)
-
-    # Protein: 2.0g per kg
-    target_protein = round(user.weight_kg * 2.0, 0)
-    protein_cals = target_protein * 4
-    # Fat: 25% of calories
-    fat_cals = target_kcal * 0.25
-    target_fat = round(fat_cals / 9, 0)
-    # Remaining: Carbs
-    carb_cals = max(0, target_kcal - protein_cals - fat_cals)
-    target_carbs = round(carb_cals / 4, 0)
-
     reset_targets = bool(data.get("reset_targets", False))
-    has_existing_targets = any(
-        getattr(user, field) is not None
-        for field in ("daily_target_kcal", "target_protein_g", "target_carbs_g", "target_fat_g")
-    )
-    if reset_targets or not has_existing_targets:
-        user.daily_target_kcal = target_kcal
-        user.target_protein_g = target_protein
-        user.target_carbs_g = target_carbs
-        user.target_fat_g = target_fat
-    for field in ("daily_target_kcal", "target_protein_g", "target_carbs_g", "target_fat_g"):
-        if data.get(field) is not None:
-            setattr(user, field, float(data[field]))
+    target_fields = ("daily_target_kcal", "target_protein_g", "target_carbs_g", "target_fat_g")
+    has_manual_target_input = any(field in data and data[field] is not None for field in target_fields)
+    if reset_targets:
+        user.targets_customized = False
+    elif has_manual_target_input:
+        user.targets_customized = True
+
+    targets = _calculate_nutrition_targets(user, activity_mult)
+    if not user.targets_customized:
+        for field, value in targets.items():
+            setattr(user, field, value)
+    if not reset_targets:
+        for field in target_fields:
+            if data.get(field) is not None:
+                setattr(user, field, float(data[field]))
     user.profile_completed = is_user_profile_customized(user) or all(
         getattr(user, field, None) not in (None, "")
         for field in ("name", "gender", "age", "height_cm", "weight_kg", "goal", "activity_level")
@@ -828,3 +844,38 @@ def update_user_profile(db: Session, user_id: str, data: Dict[str, Any]) -> Dict
     if user.profile_completed:
         seed_user_programs_if_needed(db, user_id)
     return get_user_profile(db, user_id)
+
+
+def delete_user_account(db: Session, user_id: str) -> bool:
+    """Delete one user's private data while retaining global program templates."""
+    user = db.query(User).filter(User.id == user_id).first()
+    if user is None:
+        return False
+
+    capture_ids = [row[0] for row in db.query(FoodCapture.id).filter(FoodCapture.user_id == user_id).all()]
+    program_ids = [row[0] for row in db.query(WorkoutProgram.id).filter(WorkoutProgram.user_id == user_id).all()]
+    session_ids = [row[0] for row in db.query(WorkoutSession.id).filter(WorkoutSession.user_id == user_id).all()]
+
+    try:
+        # Keep webhook idempotency history without retaining the deleted LINE ID.
+        db.query(ProcessedWebhook).filter(ProcessedWebhook.user_id == user_id).update(
+            {ProcessedWebhook.user_id: None}, synchronize_session=False
+        )
+        db.query(FoodLog).filter(FoodLog.user_id == user_id).delete(synchronize_session=False)
+        if capture_ids:
+            db.query(FoodAnalysisDraft).filter(FoodAnalysisDraft.capture_id.in_(capture_ids)).delete(synchronize_session=False)
+            db.query(FoodCapture).filter(FoodCapture.id.in_(capture_ids)).delete(synchronize_session=False)
+        if session_ids:
+            db.query(CardioDetails).filter(CardioDetails.session_id.in_(session_ids)).delete(synchronize_session=False)
+            db.query(SessionExercise).filter(SessionExercise.session_id.in_(session_ids)).delete(synchronize_session=False)
+            db.query(WorkoutSession).filter(WorkoutSession.id.in_(session_ids)).delete(synchronize_session=False)
+        if program_ids:
+            db.query(ProgramExercise).filter(ProgramExercise.program_id.in_(program_ids)).delete(synchronize_session=False)
+            db.query(WorkoutProgram).filter(WorkoutProgram.id.in_(program_ids)).delete(synchronize_session=False)
+        db.query(CardioPreset).filter(CardioPreset.user_id == user_id).delete(synchronize_session=False)
+        db.delete(user)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    return True

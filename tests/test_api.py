@@ -153,6 +153,11 @@ def test_webapp_dashboard_endpoint():
     assert "class=\"tab-nav\"" not in response.text
     assert "reset_targets" in response.text
     assert "บันทึกเป้าหมาย" in response.text
+    assert "/api/me/account" in response.text
+    assert "ลบข้อมูลบัญชี" in response.text
+    assert "โหมดคำนวณอัตโนมัติ" in response.text
+    assert "โหมดกำหนดเอง" in response.text
+    assert "กลับไปใช้ค่าคำนวณอัตโนมัติ" in response.text
     assert "/api/user/" not in response.text
 
 
@@ -292,6 +297,39 @@ def test_profile_target_override_contract(as_user):
     reset = client.put("/api/me/profile", json={"reset_targets": True})
     assert reset.status_code == 200
     assert reset.json()["profile"]["daily_target_kcal"] != 1900
+
+
+def test_profile_partial_update_does_not_reset_activity_or_auto_targets(as_user):
+    user_id = "partial-profile-update"
+    as_user(user_id)
+    response = client.put("/api/me/profile", json={
+        "name": "Partial User",
+        "gender": "male",
+        "age": 30,
+        "height_cm": 175,
+        "weight_kg": 72,
+        "goal": "recomposition",
+        "activity_multiplier": 1.55,
+    })
+    assert response.status_code == 200
+    initial = response.json()["profile"]
+    changed = client.put("/api/me/profile", json={"weight_kg": 80})
+    assert changed.status_code == 200
+    updated = changed.json()["profile"]
+    assert updated["activity_level"] == initial["activity_level"] == "1.55"
+    assert updated["daily_target_kcal"] != initial["daily_target_kcal"]
+
+
+def test_account_delete_is_owner_scoped_and_resets_identity(as_user):
+    user_id = "account-delete-api"
+    complete_profile(as_user, user_id)
+    assert client.delete("/api/me/account").json() == {"status": "deleted"}
+    profile = client.get("/api/me/profile")
+    assert profile.status_code == 200
+    assert profile.json()["profile_completed"] is False
+
+    as_user("account-delete-other")
+    assert client.delete("/api/me/account").status_code == 200
 
 
 def test_protected_api_requires_authentication():

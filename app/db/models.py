@@ -25,6 +25,7 @@ class User(Base):
     target_protein_g = Column(Float, nullable=True)
     target_carbs_g = Column(Float, nullable=True)
     target_fat_g = Column(Float, nullable=True)
+    targets_customized = Column(Boolean, nullable=False, default=False, server_default=false())
     profile_completed = Column(Boolean, nullable=False, default=False, server_default=false())
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))

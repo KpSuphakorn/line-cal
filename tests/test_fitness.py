@@ -23,6 +23,7 @@ from app.services.fitness import (
     update_food_log,
     update_exercise_weight,
     update_user_profile,
+    delete_user_account,
 )
 from app.services.workouts import create_cardio_session, create_strength_session, save_cardio_preset
 from app.services.workouts import delete_program
@@ -232,6 +233,76 @@ def test_profile_update_preserves_manual_targets_without_reset(db_session):
     update_user_profile(db_session, user_id, {"weight_kg": 80, "reset_targets": True})
     reset = db_session.query(User).filter_by(id=user_id).one()
     assert reset.daily_target_kcal != 2000
+
+
+def test_automatic_targets_follow_weight_until_manually_customized(db_session):
+    user_id = "automatic-targets"
+    update_user_profile(db_session, user_id, {
+        "name": "Auto User",
+        "gender": "male",
+        "age": 30,
+        "height_cm": 175,
+        "weight_kg": 72,
+        "goal": "recomposition",
+        "activity_multiplier": 1.45,
+    })
+    saved = db_session.query(User).filter_by(id=user_id).one()
+    initial_kcal = saved.daily_target_kcal
+    assert saved.targets_customized is False
+
+    update_user_profile(db_session, user_id, {"weight_kg": 80})
+    saved = db_session.query(User).filter_by(id=user_id).one()
+    assert saved.daily_target_kcal != initial_kcal
+    assert saved.targets_customized is False
+
+    update_user_profile(db_session, user_id, {"daily_target_kcal": 1900})
+    saved = db_session.query(User).filter_by(id=user_id).one()
+    assert saved.targets_customized is True
+    update_user_profile(db_session, user_id, {"weight_kg": 90})
+    saved = db_session.query(User).filter_by(id=user_id).one()
+    assert saved.daily_target_kcal == 1900
+
+    update_user_profile(db_session, user_id, {"reset_targets": True})
+    saved = db_session.query(User).filter_by(id=user_id).one()
+    assert saved.targets_customized is False
+    assert saved.activity_level == "1.45"
+
+
+def test_delete_user_account_removes_private_data_and_detaches_webhooks(db_session):
+    from app.db.models import (
+        CardioPreset,
+        FoodAnalysisDraft,
+        FoodCapture,
+        FoodLog,
+        ProcessedWebhook,
+        ProgramTemplate,
+        WorkoutProgram,
+        WorkoutSession,
+    )
+
+    user_id = "delete-account-owner"
+    complete_profile(db_session, user_id)
+    program_id = next(item["id"] for item in get_user_programs(db_session, user_id).values())
+    create_strength_session(db_session, user_id, program_id)
+    save_cardio_preset(db_session, user_id, {"name": "เดิน", "activity": "เดิน", "duration_min": 20})
+    capture = FoodCapture(user_id=user_id, token="delete-capture", source="text", status="draft")
+    db_session.add(capture)
+    db_session.flush()
+    db_session.add(FoodAnalysisDraft(capture_id=capture.id, order_num=1, food_name="ข้าว", portion="1 ที่"))
+    db_session.add(FoodLog(user_id=user_id, food_name="ข้าว", calories=100))
+    db_session.add(ProcessedWebhook(event_id="delete-event", user_id=user_id))
+    db_session.commit()
+    assert delete_user_account(db_session, user_id) is True
+
+    assert db_session.query(User).filter_by(id=user_id).first() is None
+    assert db_session.query(FoodLog).filter_by(user_id=user_id).count() == 0
+    assert db_session.query(FoodCapture).filter_by(user_id=user_id).count() == 0
+    assert db_session.query(FoodAnalysisDraft).count() == 0
+    assert db_session.query(CardioPreset).filter_by(user_id=user_id).count() == 0
+    assert db_session.query(WorkoutProgram).filter_by(user_id=user_id).count() == 0
+    assert db_session.query(WorkoutSession).filter_by(user_id=user_id).count() == 0
+    assert db_session.query(ProcessedWebhook).filter_by(event_id="delete-event").one().user_id is None
+    assert db_session.query(ProgramTemplate).count() == 3
 
 
 def test_history_summary_uses_bangkok_week_bounds(db_session):

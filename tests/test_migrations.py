@@ -44,7 +44,7 @@ def test_fresh_sqlite_migrations_reach_head(tmp_path):
 
     with sqlite3.connect(database_path) as connection:
         revision = connection.execute("SELECT version_num FROM alembic_version").fetchone()[0]
-        assert revision == "0006_cardio_presets"
+        assert revision == "0007_profile_targets_customized"
 
         food_columns = {
             row[1]: row[3]
@@ -65,6 +65,8 @@ def test_fresh_sqlite_migrations_reach_head(tmp_path):
         }
         assert not {"workout_logs", "user_exercises", "pending_food_analyses"} & tables
         assert "cardio_presets" in tables
+        user_columns = {row[1]: row[3] for row in connection.execute("PRAGMA table_info(users)")}
+        assert user_columns["targets_customized"] == 1
 
 
 def test_migration_url_overrides_runtime_url(tmp_path):
@@ -85,6 +87,40 @@ def test_migration_url_overrides_runtime_url(tmp_path):
 
     assert migration_path.exists()
     assert not runtime_path.exists()
+
+
+def test_targets_customized_migration_preserves_legacy_targets(tmp_path):
+    database_path = tmp_path / "legacy-targets.db"
+    env = os.environ.copy()
+    env["DATABASE_URL"] = f"sqlite:///{database_path}"
+    env.pop("MIGRATION_DATABASE_URL", None)
+
+    subprocess.run(
+        [sys.executable, "-m", "alembic", "upgrade", "0006_cardio_presets"],
+        cwd=ROOT,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            "INSERT INTO users (id, daily_target_kcal, target_protein_g) VALUES (?, ?, ?)",
+            ("legacy-manual", 2100, 140),
+        )
+        connection.execute("INSERT INTO users (id) VALUES (?)", ("legacy-empty",))
+
+    subprocess.run(
+        [sys.executable, "-m", "alembic", "upgrade", "head"],
+        cwd=ROOT,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    with sqlite3.connect(database_path) as connection:
+        values = dict(connection.execute("SELECT id, targets_customized FROM users"))
+    assert values == {"legacy-manual": 1, "legacy-empty": 0}
 
 
 def test_existing_cardio_presets_table_is_adopted_by_0006(tmp_path):
@@ -115,7 +151,7 @@ def test_existing_cardio_presets_table_is_adopted_by_0006(tmp_path):
     )
     with sqlite3.connect(database_path) as connection:
         revision = connection.execute("SELECT version_num FROM alembic_version").fetchone()[0]
-        assert revision == "0006_cardio_presets"
+        assert revision == "0007_profile_targets_customized"
 
 
 def test_malformed_existing_cardio_presets_table_fails_adoption(tmp_path):

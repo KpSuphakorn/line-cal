@@ -16,7 +16,7 @@ from app.db.database import init_db, get_db
 from app.services.line_handler import handle_line_events
 from app.services.fitness import (
     get_daily_summary, get_or_create_user, get_monthly_summary, get_history_summary, update_food_log, delete_food_log,
-    get_user_profile, update_user_profile, is_user_profile_customized
+    get_user_profile, update_user_profile, is_user_profile_customized, delete_user_account
 )
 from app.services.ai_vision import analyze_food_image
 from app.services.food_capture import get_capture, serialize_capture, update_capture, confirm_capture, cancel_capture, ai_quota_remaining
@@ -200,7 +200,7 @@ class UserProfilePayload(BaseModel):
     weight_kg: Optional[float] = Field(default=None, ge=20, le=400)
     goal: Optional[str] = None
     activity_level: Optional[str] = None
-    activity_multiplier: Optional[float] = Field(default=1.45, ge=1.0, le=3.0)
+    activity_multiplier: Optional[float] = Field(default=None, ge=1.0, le=3.0)
     daily_target_kcal: Optional[float] = Field(default=None, ge=500, le=10000)
     target_protein_g: Optional[float] = Field(default=None, ge=0, le=1000)
     target_carbs_g: Optional[float] = Field(default=None, ge=0, le=2000)
@@ -253,7 +253,13 @@ def api_me_profile(db: Session = Depends(get_db), current_user: AuthenticatedUse
 
 @app.put("/api/me/profile")
 def api_me_update_profile(payload: UserProfilePayload, db: Session = Depends(get_db), current_user: AuthenticatedUser = Depends(get_current_user)):
-    return {"status": "success", "profile": update_user_profile(db, current_user.subject, payload.model_dump(exclude_none=True))}
+    return {"status": "success", "profile": update_user_profile(db, current_user.subject, payload.model_dump(exclude_unset=True, exclude_none=True))}
+
+
+@app.delete("/api/me/account")
+def api_me_delete_account(db: Session = Depends(get_db), current_user: AuthenticatedUser = Depends(get_current_user)):
+    delete_user_account(db, current_user.subject)
+    return {"status": "deleted"}
 
 
 class ProgramExercisePayload(BaseModel):
