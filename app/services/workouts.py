@@ -1,11 +1,10 @@
 """User-owned workout programs and historical session snapshots."""
 from datetime import datetime, timezone
-from typing import Any, Iterable
+from typing import Any
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
-from app.config import settings
 from app.db.models import (
     CardioDetails,
     CardioPreset,

@@ -12,18 +12,21 @@ from app.db.database import Base
 from app.db.models import FoodAnalysisDraft, FoodLog, User
 from app.services.fitness import (
     calculate_bmr,
-    calculate_incline_walk_burn,
     calculate_tdee,
     get_daily_summary,
     get_history_summary,
     get_or_create_user,
-    get_user_programs,
     update_food_log,
-    update_exercise_weight,
     update_user_profile,
     delete_user_account,
 )
-from app.services.workouts import create_cardio_session, create_strength_session, save_cardio_preset
+from app.services.workouts import (
+    create_cardio_session,
+    create_strength_session,
+    list_programs,
+    save_cardio_preset,
+    save_program,
+)
 from app.services.workouts import delete_program
 from app.services.food_capture import (
     cancel_capture_result,
@@ -74,11 +77,6 @@ def test_tdee_calculation():
     assert calculate_tdee(1702.5, 1.45) == 2468.6
 
 
-def test_incline_walk_burn():
-    burn_40 = calculate_incline_walk_burn(72.0, 40, incline_pct=10.0)
-    assert 250.0 < burn_40 < 450.0
-
-
 def test_daily_summary_workflow_after_profile_setup(db_session):
     user_id = "test_user_daily"
     user = complete_profile(db_session, user_id)
@@ -90,8 +88,8 @@ def test_daily_summary_workflow_after_profile_setup(db_session):
         FoodLog(user_id=user_id, food_name="ข้าวกะเพราอกไก่", calories=520.0, protein=34.0, carbs=58.0, fat=14.0),
     ])
     db_session.commit()
-    programs = get_user_programs(db_session, user_id)
-    push_id = next(program["id"] for program in programs.values() if program["name"] == "Push")
+    programs = list_programs(db_session, user_id)
+    push_id = next(program["id"] for program in programs if program["name"] == "Push")
     create_strength_session(db_session, user_id, push_id)
     cardio_preset = save_cardio_preset(db_session, user_id, {
         "name": "เดินชัน",
@@ -120,20 +118,22 @@ def test_user_programs_are_independent_and_editable(db_session):
     user_id = "test_user_programs"
     complete_profile(db_session, user_id)
 
-    programs = get_user_programs(db_session, user_id)
+    programs = list_programs(db_session, user_id)
     assert len(programs) == 3
-    assert {program["name"] for program in programs.values()} == {"Push", "Pull", "Legs"}
+    assert {program["name"] for program in programs} == {"Push", "Pull", "Legs"}
 
-    push = next(program for program in programs.values() if program["name"] == "Push")
+    push = next(program for program in programs if program["name"] == "Push")
     pec_dec = next(exercise for exercise in push["exercises"] if "pec dec" in exercise["name"].lower())
     assert pec_dec["weight"] == 40.0
 
-    updated = update_exercise_weight(db_session, user_id, "pec dec fly", "45 kg")
-    assert updated is not None
-    assert updated.weight == 45.0
+    edited_exercises = [
+        {**exercise, "weight": 45.0} if exercise["id"] == pec_dec["id"] else exercise
+        for exercise in push["exercises"]
+    ]
+    save_program(db_session, user_id, {"exercises": edited_exercises}, program_id=push["id"])
 
-    refreshed = get_user_programs(db_session, user_id)
-    refreshed_push = next(program for program in refreshed.values() if program["name"] == "Push")
+    refreshed = list_programs(db_session, user_id)
+    refreshed_push = next(program for program in refreshed if program["name"] == "Push")
     refreshed_pec_dec = next(exercise for exercise in refreshed_push["exercises"] if "pec dec" in exercise["name"].lower())
     assert refreshed_pec_dec["weight"] == 45.0
 
@@ -311,8 +311,8 @@ def test_bangkok_day_groups_utc_midnight_crossing_entries(db_session):
 def test_deleting_program_detaches_historical_session(db_session):
     user_id = "program-history"
     complete_profile(db_session, user_id)
-    programs = get_user_programs(db_session, user_id)
-    program_id = next(item["id"] for item in programs.values() if item["name"] == "Push")
+    programs = list_programs(db_session, user_id)
+    program_id = next(item["id"] for item in programs if item["name"] == "Push")
     session = create_strength_session(db_session, user_id, program_id)
 
     assert delete_program(db_session, user_id, program_id) is True
@@ -387,7 +387,7 @@ def test_delete_user_account_removes_private_data_and_detaches_webhooks(db_sessi
 
     user_id = "delete-account-owner"
     complete_profile(db_session, user_id)
-    program_id = next(item["id"] for item in get_user_programs(db_session, user_id).values())
+    program_id = list_programs(db_session, user_id)[0]["id"]
     create_strength_session(db_session, user_id, program_id)
     save_cardio_preset(db_session, user_id, {"name": "เดิน", "activity": "เดิน", "duration_min": 20})
     capture = FoodCapture(user_id=user_id, token="delete-capture", source="text", status="draft")
@@ -439,8 +439,8 @@ def test_create_strength_session_survives_concurrent_duplicate_source_event(db_s
 
     user_id = "strength-race-user"
     complete_profile(db_session, user_id)
-    programs = get_user_programs(db_session, user_id)
-    push_id = next(program["id"] for program in programs.values() if program["name"] == "Push")
+    programs = list_programs(db_session, user_id)
+    push_id = next(program["id"] for program in programs if program["name"] == "Push")
 
     winner = create_strength_session(db_session, user_id, push_id, source_event_id="evt-strength-race")
 

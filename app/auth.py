@@ -7,7 +7,7 @@ from time import time
 from typing import Any
 
 import httpx
-from fastapi import Depends, Header, HTTPException
+from fastapi import Header, HTTPException
 
 from app.config import settings
 
@@ -58,9 +58,3 @@ async def get_current_user(authorization: str | None = Header(default=None)) -> 
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(status_code=401, detail="Bearer LINE ID token required")
     return await verify_line_id_token(authorization[7:].strip())
-
-
-def require_owner(path_user_id: str, current_user: AuthenticatedUser) -> str:
-    if path_user_id != current_user.subject:
-        raise HTTPException(status_code=403, detail="User ownership mismatch")
-    return current_user.subject

@@ -136,13 +136,6 @@ def serialize_capture(capture: FoodCapture) -> dict[str, Any]:
     }
 
 
-def get_capture(db: Session, user_id: str, token: str) -> FoodCapture:
-    capture = _get_capture(db, user_id, token)
-    if not capture:
-        raise HTTPException(status_code=404, detail="Food capture not found")
-    return capture
-
-
 def get_editable_capture(db: Session, user_id: str, token: str) -> FoodCapture:
     """Return only a live draft for the authenticated LIFF editor."""
     # Serialize the editor's expiry transition with confirm/cancel/update.
@@ -245,11 +238,6 @@ def cancel_capture_result(db: Session, user_id: str, token: str) -> CaptureActio
     return CaptureActionResult("cancelled", [])
 
 
-def cancel_capture(db: Session, user_id: str, token: str) -> bool:
-    """Keep the API's existing boolean contract for callers outside chat."""
-    return cancel_capture_result(db, user_id, token).status in {"cancelled", "already_cancelled"}
-
-
 def ai_quota_remaining(db: Session, user_id: str) -> int:
     now = datetime.now(BANGKOK)
     start = now.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
@@ -260,8 +248,3 @@ def ai_quota_remaining(db: Session, user_id: str) -> int:
         FoodCapture.created_at < end,
     ).count()
     return max(0, int(settings.AI_DAILY_LIMIT) - used)
-
-
-def ensure_ai_quota(db: Session, user_id: str) -> None:
-    if ai_quota_remaining(db, user_id) <= 0:
-        raise HTTPException(status_code=429, detail="วันนี้ใช้โควต้าวิเคราะห์อาหารครบแล้ว ลองใหม่พรุ่งนี้ได้เลยครับ")

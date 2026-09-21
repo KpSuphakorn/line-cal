@@ -6,8 +6,6 @@ from app.templates.flex_cards import (
     create_daily_dashboard_card,
     create_food_analyzed_card,
     create_profile_onboarding_card,
-    create_profile_summary_card,
-    create_text_food_card,
     create_welcome_guide_card,
     create_workout_logged_card,
     create_workout_splits_carousel,
@@ -200,20 +198,6 @@ def test_workout_logged_card_valid():
     assert "300 kcal" in str(card_dict)
 
 
-def test_text_food_card_valid():
-    food_sample = {
-        "food_name": "ข้าวมันไก่ต้ม",
-        "portion": "1 จาน",
-        "calories": 596.0,
-        "protein": 24.0,
-        "carbs": 68.0,
-        "fat": 25.0,
-    }
-    card_dict = create_text_food_card(food_sample, "test_text_temp_id")
-    container = FlexContainer.from_dict(card_dict)
-    assert container.type == "bubble"
-
-
 def test_welcome_guide_card_valid():
     card_dict = create_welcome_guide_card()
     container = FlexContainer.from_dict(card_dict)
@@ -223,18 +207,10 @@ def test_welcome_guide_card_valid():
     assert "พิมพ์ ออกกำลังกาย" not in str(card_dict)
 
 
-def test_profile_cards_valid():
+def test_profile_onboarding_card_valid():
     onboarding = create_profile_onboarding_card()
-    profile = create_profile_summary_card(
-        {
-            "name": "Suphakorn",
-            "daily_target_kcal": 1950.0,
-            "target_protein_g": 145.0,
-        }
-    )
     assert FlexContainer.from_dict(onboarding).type == "bubble"
-    assert FlexContainer.from_dict(profile).type == "bubble"
-    assert "tab=profile" in str(profile)
+    assert "tab=profile" in str(onboarding)
 
 
 def test_web_actions_use_liff_deep_link_and_preserve_query_values():
@@ -265,7 +241,6 @@ def test_cards_omit_uri_actions_when_webapp_is_unconfigured(monkeypatch):
         create_workout_logged_card("เดิน", 100),
         create_welcome_guide_card(),
         create_profile_onboarding_card(),
-        create_profile_summary_card({"name": "ผู้ใช้"}),
         create_workout_splits_carousel(
             [{"id": 1, "name": "Push", "exercises": []}],
             cardio_presets=[{"id": 2, "name": "เดิน", "activity": "เดิน", "duration_min": 20}],

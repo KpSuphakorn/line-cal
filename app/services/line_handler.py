@@ -5,7 +5,6 @@ import hashlib
 import json
 from typing import Dict, Any, Optional
 
-from linebot.v3 import WebhookParser
 from linebot.v3.messaging import (
     ApiClient,
     Configuration,

@@ -5,6 +5,15 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# Pinned explicit model names, tried in order — never a "-latest" alias, which
+# Google silently repoints to newer preview models with much smaller free-tier
+# daily quotas. Each model draws from its own daily quota pool, so the chain
+# survives one model running out. Verify replacements with a live
+# generate_content call, not genai.list_models(): that endpoint listed
+# gemini-2.5-flash as available while calls to it 404'd as "no longer
+# available to new users".
+FOOD_MODELS = ("gemini-3.6-flash", "gemini-3.7-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite")
+
 
 class FoodAnalysisError(RuntimeError):
     """Raised when Gemini fails to produce a real food analysis.
@@ -15,16 +24,14 @@ class FoodAnalysisError(RuntimeError):
     """
 
 
-def generate_food_json(genai_module: Any, models: tuple[str, ...], contents: list, log_label: str) -> dict:
-    """Call Gemini across pinned models in order, returning the first successful JSON reply.
+def generate_food_json(genai_module: Any, contents: list, log_label: str) -> dict:
+    """Call Gemini across FOOD_MODELS in order, returning the first successful JSON reply.
 
-    Models are tried in order and never a "-latest" alias, which Google
-    silently repoints to newer preview models with much smaller free-tier
-    daily quotas. Raises FoodAnalysisError only once every pinned model has
-    failed — never falls back to fabricated data.
+    Raises FoodAnalysisError only once every pinned model has failed — never
+    falls back to fabricated data.
     """
     last_error: Exception | None = None
-    for model_name in models:
+    for model_name in FOOD_MODELS:
         try:
             model = genai_module.GenerativeModel(model_name)
             response = model.generate_content(

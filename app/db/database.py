@@ -37,7 +37,9 @@ def get_db():
 
 
 def init_db():
-    from app.db import models
+    # Imported for its side effect: registers every model on Base.metadata
+    # before create_all below.
+    from app.db import models  # noqa: F401
     validate_production_settings()
     if settings.APP_ENV.lower() in {"production", "prod"}:
         # Production schema changes must be applied by Alembic before startup.

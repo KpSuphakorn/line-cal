@@ -9,15 +9,6 @@ from app.services.ai_errors import FoodAnalysisError, generate_food_json
 
 logger = logging.getLogger(__name__)
 
-# See ai_errors.generate_food_json for why these are pinned explicitly.
-# Verified reachable with this account's key via a live generate_content call —
-# genai.list_models() alone is not reliable: it listed gemini-2.5-flash and
-# gemini-2.5-flash-lite as available, but both 404'd as "no longer available
-# to new users" when actually called. Four models (not just two) so a
-# single model's free-tier daily quota running out doesn't exhaust the chain —
-# each pinned model draws from its own separate quota pool.
-FOOD_VISION_MODELS = ("gemini-3.6-flash", "gemini-3.7-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite")
-
 SYSTEM_PROMPT = """คุณเป็นนักโภชนาการ AI ผู้เชี่ยวชาญด้านอาหารไทยและอาหารสากล
 วิเคราะห์อาหารทุกอย่างที่เห็นในรูปเป็นรายการอิสระ แยกข้าว เนื้อ ไข่ เครื่องดื่ม
 หรือของเคียงเมื่อแยกได้ ให้ประมาณชื่อ ปริมาณ kcal และสารอาหารเป็นกรัม
@@ -29,7 +20,7 @@ SYSTEM_PROMPT = """คุณเป็นนักโภชนาการ AI ผ
 
 def analyze_food_image(image_bytes: bytes) -> Dict[str, Any]:
     """
-    Analyze food image using Google Gemini Vision (see FOOD_VISION_MODELS).
+    Analyze food image using Google Gemini Vision (see ai_errors.FOOD_MODELS).
     Falls back to a structured mock response only if GEMINI_API_KEY is not configured.
     """
     if not settings.GEMINI_API_KEY or "mock" in settings.GEMINI_API_KEY:
@@ -62,5 +53,5 @@ def analyze_food_image(image_bytes: bytes) -> Dict[str, Any]:
     except Exception as e:
         raise FoodAnalysisError("Gemini vision analysis failed") from e
 
-    data = generate_food_json(genai, FOOD_VISION_MODELS, [SYSTEM_PROMPT, image], log_label="vision analysis")
+    data = generate_food_json(genai, [SYSTEM_PROMPT, image], log_label="vision analysis")
     return data if isinstance(data.get("items"), list) else {"items": [data]}

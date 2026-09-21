@@ -4,7 +4,6 @@ from zoneinfo import ZoneInfo
 from typing import Dict, Any, List, Optional, Iterable
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
-from sqlalchemy import func
 from app.db.models import (
     User,
     FoodLog,
@@ -136,54 +135,6 @@ def seed_user_programs_if_needed(db: Session, user_id: str) -> List[WorkoutProgr
     return _existing_user_programs(db, user_id)
 
 
-def get_user_programs(db: Session, user_id: str) -> Dict[str, Any]:
-    """Return only the authenticated user's editable workout programs."""
-    programs = seed_user_programs_if_needed(db, user_id)
-    return {
-        str(program.id): {
-            "id": program.id,
-            "name": program.name,
-            "source_key": program.source_key,
-            "exercises": [
-                {
-                    "id": exercise.id,
-                    "name": exercise.name,
-                    "sets": exercise.sets,
-                    "repetitions": exercise.repetitions,
-                    "weight": exercise.weight,
-                    "notes": exercise.notes or "",
-                }
-                for exercise in program.exercises
-            ],
-        }
-        for program in programs
-    }
-
-
-def update_exercise_weight(db: Session, user_id: str, exercise_query: str, new_weight: str) -> Optional[Any]:
-    """Update a matching exercise in the user's program."""
-    programs = seed_user_programs_if_needed(db, user_id)
-    exercises = [exercise for program in programs for exercise in program.exercises]
-    q = exercise_query.strip().lower()
-
-    # Find matching exercise
-    match = None
-    for ex in exercises:
-        if q in ex.name.lower():
-            match = ex
-            break
-
-    if match:
-        try:
-            match.weight = float(str(new_weight).replace("kg", "").strip())
-        except ValueError:
-            match.notes = new_weight.strip()
-        db.commit()
-        db.refresh(match)
-        return match
-    return None
-
-
 def calculate_bmr(gender: str, weight_kg: float, height_cm: float, age: int) -> float:
     """
     Calculate Basal Metabolic Rate (BMR) using Mifflin-St Jeor formula.
@@ -200,18 +151,6 @@ def calculate_bmr(gender: str, weight_kg: float, height_cm: float, age: int) -> 
 def calculate_tdee(bmr: float, activity_multiplier: float = 1.45) -> float:
     """Calculate Total Daily Energy Expenditure (TDEE)."""
     return round(bmr * activity_multiplier, 1)
-
-
-def calculate_incline_walk_burn(weight_kg: float, duration_min: int, incline_pct: float = 10.0) -> float:
-    """
-    Calculate calories burned during incline walking.
-    Walking at ~4.8 km/h on 10-12% incline has MET ~7.5.
-    Calories = (MET * 3.5 * weight_kg / 200) * duration_min
-    """
-    # MET increases slightly with higher incline
-    met = 6.5 + (incline_pct * 0.1)
-    burn = (met * 3.5 * weight_kg / 200.0) * duration_min
-    return round(burn, 1)
 
 
 def is_user_profile_customized(user: User) -> bool:
@@ -510,7 +449,6 @@ def delete_food_log(db: Session, food_id: int, user_id: str | None = None) -> bo
 
 def get_user_profile(db: Session, user_id: str) -> Dict[str, Any]:
     """Retrieve personal metrics, BMR, TDEE, and targets for a user."""
-    from app.config import settings
     user = get_or_create_user(db, user_id, settings)
     gender = user.gender or ""
     weight = user.weight_kg
@@ -582,7 +520,6 @@ def _calculate_nutrition_targets(user: User, activity_multiplier: float) -> Dict
 
 def update_user_profile(db: Session, user_id: str, data: Dict[str, Any]) -> Dict[str, Any]:
     """Update user personal metrics and recalculate BMR, TDEE, and nutrition targets."""
-    from app.config import settings
     user = get_or_create_user(db, user_id, settings)
 
     data = dict(data)

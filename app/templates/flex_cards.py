@@ -88,10 +88,6 @@ def create_food_analyzed_card(food_data: Dict[str, Any], capture_token: str, use
     return _bubble(f"🥗 AI วิเคราะห์ {len(items)} รายการ", [{"type": "text", "text": f"รวมประมาณ {total:.0f} kcal • ตรวจสอบและแก้ไขก่อนยืนยัน", "size": "sm", "color": "#475569"}, *rows], footer, "#059669")
 
 
-def create_text_food_card(food_data: Dict[str, Any], capture_token: str, user_id: str = "") -> Dict[str, Any]:
-    return create_food_analyzed_card(food_data, capture_token, user_id=user_id)
-
-
 def create_daily_dashboard_card(summary: Dict[str, Any], last_food_id: int | None = None) -> Dict[str, Any]:
     target = int(summary.get("food_target", summary.get("target_kcal", 0)))
     eaten = int(summary.get("food_consumed", summary.get("calories_in", 0)))
@@ -171,8 +167,3 @@ def create_welcome_guide_card(user_id: str = "") -> Dict[str, Any]:
 def create_profile_onboarding_card(user_id: str = "") -> Dict[str, Any]:
     footer = [button for button in (_uri_button("เปิดโปรไฟล์", "profile", "primary"),) if button]
     return _bubble("กรอกโปรไฟล์ก่อนเริ่มใช้งาน", [{"type": "text", "text": "กรอกข้อมูลร่างกายและเป้าหมาย เพื่อคำนวณเป้าหมายอาหารและเริ่มบันทึกข้อมูล", "size": "sm", "color": "#334155", "wrap": True}], footer, "#7C2D12")
-
-
-def create_profile_summary_card(profile: Dict[str, Any], user_id: str = "") -> Dict[str, Any]:
-    footer = [button for button in (_uri_button("แก้ไขโปรไฟล์", "profile", "primary"),) if button]
-    return _bubble("โปรไฟล์", [{"type": "text", "text": str(profile.get("name") or "ผู้ใช้งาน"), "size": "lg", "weight": "bold", "color": "#1E293B"}, {"type": "text", "text": f"เป้าอาหาร {int(profile.get('daily_target_kcal') or 0)} kcal • โปรตีน {int(profile.get('target_protein_g') or 0)}g", "size": "sm", "color": "#475569"}], footer)
