@@ -86,7 +86,7 @@ def test_daily_dashboard_card_valid():
     assert container.type == "bubble"
     assert "วันนี้" in card_dict["header"]["contents"][0]["text"]
     assert "tab=history" in str(card_dict)
-    footer_labels = {item["action"]["label"] for item in card_dict["footer"]["contents"]}
+    footer_labels = " ".join(item["action"]["label"] for item in card_dict["footer"]["contents"])
     assert "เวท" in footer_labels
     assert "ออกกำลังกาย" not in footer_labels
 
@@ -187,8 +187,9 @@ def test_workout_splits_saved_cards_share_log_and_edit_actions():
     )
 
     for bubble in carousel_dict["contents"]:
-        labels = {item["action"].get("label") for item in bubble["footer"]["contents"]}
-        assert labels == {"บันทึกวันนี้", "แก้ไขในเว็บ"}
+        labels = " ".join(item["action"].get("label", "") for item in bubble["footer"]["contents"])
+        assert "บันทึกวันนี้" in labels
+        assert "แก้ไขในเว็บ" in labels
 
 
 def test_workout_logged_card_valid():

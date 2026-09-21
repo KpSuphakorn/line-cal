@@ -10,7 +10,7 @@ from sqlalchemy.orm import sessionmaker
 from app.db.models import Base, FoodLog, ProcessedWebhook
 from app.services.fitness import update_user_profile
 from app.services.food_capture import create_capture
-from app.services.line_handler import handle_line_events, handle_postback_event, WELCOME_INTRO_TEXT, WELCOME_FEATURES_TEXT
+from app.services.line_handler import handle_line_events, handle_postback_event, WELCOME_INTRO_TEXT
 
 
 def get_test_db():
@@ -22,7 +22,7 @@ def get_test_db():
 
 @patch("app.services.line_handler.get_line_clients")
 def test_follow_event_onboarding_sequence(mock_get_clients):
-    """Verify FollowEvent triggers 3-message onboarding sequence modeled after KinDee."""
+    """Onboarding is intro + the profile step; the command list is not repeated here."""
     mock_messaging_api = MagicMock()
     mock_blob_api = MagicMock()
     mock_get_clients.return_value = (MagicMock(), mock_messaging_api, mock_blob_api)
@@ -39,22 +39,18 @@ def test_follow_event_onboarding_sequence(mock_get_clients):
     assert mock_messaging_api.reply_message.called
     call_args = mock_messaging_api.reply_message.call_args[0][0]
     assert call_args.reply_token == "test_reply_token"
-    assert len(call_args.messages) == 3
+    assert len(call_args.messages) == 2
 
     # Message 1: Intro Text
     assert isinstance(call_args.messages[0], TextMessage)
     assert call_args.messages[0].text == WELCOME_INTRO_TEXT
 
-    # Message 2: Features Text
-    assert isinstance(call_args.messages[1], TextMessage)
-    assert call_args.messages[1].text == WELCOME_FEATURES_TEXT
-
-    # Message 3: Profile Onboarding Flex Message
-    assert isinstance(call_args.messages[2], FlexMessage)
+    # Message 2: Profile Onboarding Flex Message
+    assert isinstance(call_args.messages[1], FlexMessage)
     # The LIFF URL must not carry an owner chosen by the browser.  The web app
     # authenticates the LINE subject with a verified ID token instead.
-    assert "user_id" not in str(call_args.messages[2].contents.to_dict())
-    assert "new_user_123" not in str(call_args.messages[2].contents.to_dict())
+    assert "user_id" not in str(call_args.messages[1].contents.to_dict())
+    assert "new_user_123" not in str(call_args.messages[1].contents.to_dict())
 
 
 @patch("app.services.line_handler.get_line_clients")
@@ -97,12 +93,13 @@ def test_profile_command_is_direct_entrypoint(mock_get_clients, mock_reply_webap
     handle_line_events([event], db)
 
     mock_reply_webapp.assert_called_once()
-    assert mock_reply_webapp.call_args.args[2:] == ("profile", "เปิดโปรไฟล์")
+    assert mock_reply_webapp.call_args.args[2:] == ("profile",)
 
 
+@pytest.mark.parametrize("greeting", ["สวัสดี", "หวัดดี", "hello", "hi"])
 @patch("app.services.line_handler.get_line_clients")
-def test_greeting_command(mock_get_clients):
-    """Verify 'สวัสดี' sends a warm greeting."""
+def test_greeting_gets_the_same_guide_card_as_any_other_chatter(mock_get_clients, greeting):
+    """A greeting has no answer of its own, so it must not cost an extra round trip."""
     mock_messaging_api = MagicMock()
     mock_get_clients.return_value = (MagicMock(), mock_messaging_api, MagicMock())
 
@@ -110,23 +107,22 @@ def test_greeting_command(mock_get_clients):
     event = MagicMock(spec=MessageEvent)
     event.reply_token = "reply_tok_hi"
     event.source = MagicMock()
-    event.source.user_id = "user_greet"
+    event.source.user_id = f"user_greet_{greeting}"
     event.message = MagicMock(spec=TextMessageContent)
-    event.message.text = "สวัสดี"
+    event.message.text = greeting
 
     handle_line_events([event], db)
 
-    assert mock_messaging_api.reply_message.called
     call_args = mock_messaging_api.reply_message.call_args[0][0]
     assert len(call_args.messages) == 1
-    assert "สวัสดีครับ" in call_args.messages[0].text
+    assert isinstance(call_args.messages[0], FlexMessage)
+    assert "กิน ตามด้วยชื่อเมนู" in str(call_args.messages[0].contents.to_dict())
 
 
 def test_welcome_copy_uses_simple_food_command():
-    assert "กิน ตามด้วยชื่อเมนู" in WELCOME_FEATURES_TEXT
-    assert "เพื่อเข้าสู่ flow เดียวกับการถ่ายรูป" not in WELCOME_FEATURES_TEXT
-    assert "พิมพ์ เวท" in WELCOME_FEATURES_TEXT
-    assert "พิมพ์ ออกกำลังกาย" not in WELCOME_FEATURES_TEXT
+    assert "กิน ข้าวมันไก่ + น้ำส้ม" in WELCOME_INTRO_TEXT
+    assert "พิมพ์ วิธีใช้" in WELCOME_INTRO_TEXT
+    assert "เพื่อเข้าสู่ flow เดียวกับการถ่ายรูป" not in WELCOME_INTRO_TEXT
 
 
 @pytest.mark.parametrize("command", ["ออกกำลังกาย", "โปรแกรม", "exercise", "workout"])
@@ -176,7 +172,7 @@ def test_thai_workout_command_opens_saved_programs(mock_get_clients, _profile, m
 @patch("app.services.line_handler.require_completed_profile", return_value=True)
 @patch("app.services.line_handler.get_line_clients")
 def test_history_command_uses_single_webapp_entrypoint(mock_get_clients, _profile, mock_reply_webapp):
-    """History is a LIFF page, so chat should not add a redundant Flex card."""
+    """History is a LIFF page, so chat should not add a redundant message before the button."""
     mock_get_clients.return_value = (MagicMock(), MagicMock(), MagicMock())
     db = get_test_db()
     event = MagicMock(spec=MessageEvent)
@@ -189,10 +185,10 @@ def test_history_command_uses_single_webapp_entrypoint(mock_get_clients, _profil
     handle_line_events([event], db)
 
     mock_reply_webapp.assert_called_once()
-    assert mock_reply_webapp.call_args.args[2:] == ("history", "เปิดประวัติ")
+    assert mock_reply_webapp.call_args.args[2:] == ("history",)
 
 
-@pytest.mark.parametrize("action", ["confirm_food_capture", "cancel", "cancel_food_capture", "retired_action"])
+@pytest.mark.parametrize("action", ["confirm_food_capture", "cancel", "cancel_food_capture", "view_history", "retired_action"])
 @patch("app.services.line_handler.reply_webapp")
 @patch("app.services.line_handler.get_line_clients")
 def test_stale_or_unknown_postback_uses_safe_today_entrypoint(mock_get_clients, mock_reply_webapp, action):
@@ -209,7 +205,25 @@ def test_stale_or_unknown_postback_uses_safe_today_entrypoint(mock_get_clients, 
     handle_line_events([event], db)
 
     mock_reply_webapp.assert_called_once()
-    assert mock_reply_webapp.call_args.args[2:] == ("today", "เปิดวันนี้")
+    assert mock_reply_webapp.call_args.args[2:] == ("today",)
+
+
+def test_reply_webapp_sends_the_button_itself_not_a_message_pointing_at_one(monkeypatch):
+    """Two taps to reach a page is the bug; the reply must be the doorway."""
+    from app.config import settings
+    from app.services.line_handler import reply_webapp
+
+    monkeypatch.setattr(settings, "LIFF_ID", "1234567890-abcdefgh")
+    messaging_api = MagicMock()
+
+    reply_webapp(messaging_api, "reply-tok", "history")
+
+    messages = messaging_api.reply_message.call_args[0][0].messages
+    assert len(messages) == 1
+    assert isinstance(messages[0], FlexMessage)
+    rendered = str(messages[0].contents.to_dict())
+    assert "tab=history" in rendered
+    assert "กดปุ่มด้านล่าง" not in rendered
 
 
 def _complete_profile(db, user_id):

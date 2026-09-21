@@ -39,6 +39,14 @@ def _uri_button(label: str, tab: str, style: str = "secondary") -> Dict[str, Any
     return _button(label, {"type": "uri", "uri": uri}, style) if uri else None
 
 
+WEBAPP_PAGES: Dict[str, tuple[str, str, str]] = {
+    "today": ("📅 วันนี้", "ดูและแก้ไขรายการอาหารของวันนี้", "เปิดวันนี้"),
+    "history": ("📖 ประวัติย้อนหลัง", "ดูปฏิทินและสถิติย้อนหลัง", "เปิดประวัติ"),
+    "programs": ("🏋️ โปรแกรมออกกำลังกาย", "แก้ไขโปรแกรมเวทและคาร์ดิโอ", "เปิดโปรแกรม"),
+    "profile": ("👤 โปรไฟล์", "แก้ไขข้อมูลร่างกายและเป้าหมาย", "เปิดโปรไฟล์"),
+}
+
+
 def _bubble(title: str, body: list[Dict[str, Any]], footer: list[Dict[str, Any]] | None = None, color: str = "#0F172A") -> Dict[str, Any]:
     result: Dict[str, Any] = {
         "type": "bubble",
@@ -49,6 +57,16 @@ def _bubble(title: str, body: list[Dict[str, Any]], footer: list[Dict[str, Any]]
     if footer:
         result["footer"] = {"type": "box", "layout": "vertical", "spacing": "sm", "paddingAll": "12px", "contents": footer}
     return result
+
+
+def create_webapp_entry_card(tab: str, query: str = "") -> Dict[str, Any] | None:
+    """One tappable doorway into a LIFF page, with no filler message in front of it."""
+    uri = webapp_uri(tab, query)
+    if not uri:
+        return None
+    title, description, label = WEBAPP_PAGES.get(tab, ("🌐 เปิดเว็บแอป", "เปิดหน้าเว็บของ LINE Cal", "เปิด"))
+    body = [{"type": "text", "text": description, "size": "sm", "color": "#475569", "wrap": True}]
+    return _bubble(title, body, [_button(label, {"type": "uri", "uri": uri}, "primary")])
 
 
 def create_food_analyzed_card(food_data: Dict[str, Any], capture_token: str, user_id: str = "") -> Dict[str, Any]:
@@ -95,7 +113,7 @@ def create_daily_dashboard_card(summary: Dict[str, Any], last_food_id: int | Non
     rows = [{"type": "text", "text": f"🍽️ อาหาร {eaten} / {target} kcal", "size": "sm", "color": "#334155"}, {"type": "text", "text": f"🏃 ออกกำลังประมาณ {burned} kcal", "size": "sm", "color": "#166534"}, {"type": "text", "text": f"🧮 สุทธิข้อมูล {eaten - burned} kcal", "size": "sm", "color": "#1E40AF"}, {"type": "separator"}, {"type": "text", "text": f"โปรตีน {int(summary.get('protein', 0))}/{int(summary.get('target_protein', 0))}g • คาร์บ {int(summary.get('carbs', 0))}g • ไขมัน {int(summary.get('fat', 0))}g", "size": "xs", "color": "#475569", "wrap": True}]
     for food in summary.get("food_logs", [])[:5]:
         rows.append({"type": "text", "text": f"• {food.get('time', '')} {food.get('name', '')} — {int(food.get('calories', 0))} kcal", "size": "xs", "color": "#374151", "wrap": True})
-    footer = [button for button in (_uri_button("วันนี้", "today"), _uri_button("เวท", "programs"), _uri_button("ประวัติ", "history")) if button]
+    footer = [button for button in (_uri_button("📅 วันนี้", "today"), _uri_button("🏋️ เวท", "programs"), _uri_button("📖 ประวัติ", "history")) if button]
     return _bubble(f"📊 สรุปวันนี้ {summary.get('date_display', '')}", rows, footer)
 
 
@@ -120,8 +138,8 @@ def create_workout_splits_carousel(
         rows = [{"type": "text", "text": f"• {exercise.get('name', '')} — {exercise.get('sets', 0)} เซ็ต × {exercise.get('repetitions', 0)} ครั้ง", "size": "xs", "color": "#334155", "wrap": True} for exercise in (program.get("exercises") or [])[:8]]
         if not rows:
             rows = [{"type": "text", "text": "ยังไม่มีท่าในโปรแกรมนี้", "size": "xs", "color": "#64748B"}]
-        footer = [_button("บันทึกวันนี้", {"type": "postback", "data": f"action=log_workout&program_id={program.get('id')}"}, "primary")]
-        edit_button = _uri_button("แก้ไขในเว็บ", "programs")
+        footer = [_button("✅ บันทึกวันนี้", {"type": "postback", "data": f"action=log_workout&program_id={program.get('id')}"}, "primary")]
+        edit_button = _uri_button("✏️ แก้ไขในเว็บ", "programs")
         if edit_button:
             footer.append(edit_button)
         bubbles.append(_bubble(program.get("name", "โปรแกรม"), rows, footer, "#1E3A8A"))
@@ -138,13 +156,13 @@ def create_workout_splits_carousel(
             {"type": "text", "text": activity, "size": "md", "weight": "bold", "color": "#047857", "wrap": True},
             {"type": "text", "text": " • ".join(details), "size": "sm", "color": "#475569", "wrap": True},
         ]
-        footer = [_button("บันทึกวันนี้", {"type": "postback", "data": f"action=log_cardio_preset&preset_id={preset.get('id')}"}, "primary")]
+        footer = [_button("✅ บันทึกวันนี้", {"type": "postback", "data": f"action=log_cardio_preset&preset_id={preset.get('id')}"}, "primary")]
         edit_uri = webapp_uri("programs")
         if edit_uri:
-            footer.append(_button("แก้ไขในเว็บ", {"type": "uri", "uri": edit_uri}))
+            footer.append(_button("✏️ แก้ไขในเว็บ", {"type": "uri", "uri": edit_uri}))
         bubbles.append(_bubble(str(preset.get("name") or activity), rows, footer, "#047857"))
     if not bubbles:
-        footer = [button for button in (_uri_button("เปิดโปรแกรม", "programs"),) if button]
+        footer = [button for button in (_uri_button("🏋️ เปิดโปรแกรม", "programs"),) if button]
         bubbles.append(_bubble(
             "ยังไม่มีโปรแกรมออกกำลังกาย",
             [{"type": "text", "text": "สร้างโปรแกรมเวทหรือคาร์ดิโอในเว็บเพื่อเริ่มบันทึกวันนี้", "size": "sm", "color": "#475569", "wrap": True}],
@@ -154,16 +172,16 @@ def create_workout_splits_carousel(
 
 
 def create_workout_logged_card(title: str, burned_kcal: float, remaining_kcal: float = 0) -> Dict[str, Any]:
-    footer = [button for button in (_uri_button("เปิดวันนี้", "today"),) if button]
-    return _bubble("บันทึกวันนี้แล้ว", [{"type": "text", "text": title, "size": "lg", "weight": "bold", "color": "#1E3A8A"}, {"type": "text", "text": f"พลังงานโดยประมาณ {int(burned_kcal)} kcal", "size": "sm", "color": "#166534"}], footer, "#059669")
+    footer = [button for button in (_uri_button("📅 เปิดวันนี้", "today"),) if button]
+    return _bubble("✅ บันทึกวันนี้แล้ว", [{"type": "text", "text": title, "size": "lg", "weight": "bold", "color": "#1E3A8A"}, {"type": "text", "text": f"🔥 พลังงานโดยประมาณ {int(burned_kcal)} kcal", "size": "sm", "color": "#166534"}], footer, "#059669")
 
 
 def create_welcome_guide_card(user_id: str = "") -> Dict[str, Any]:
-    rows = [{"type": "text", "text": "ส่งรูปอาหาร หรือพิมพ์ กิน ตามด้วยชื่อเมนู เช่น กิน ข้าวมันไก่พิเศษ", "size": "sm", "color": "#334155", "wrap": True}, {"type": "text", "text": "กินหลายอย่าง คั่นด้วย + เช่น กิน ข้าวมันไก่ + น้ำส้ม", "size": "sm", "color": "#334155", "wrap": True}, {"type": "text", "text": "พิมพ์ สรุป เพื่อดูข้อมูลวันนี้", "size": "sm", "color": "#334155"}, {"type": "text", "text": "พิมพ์ เวท เพื่อเลือกโปรแกรมเวทและรายการคาร์ดิโอ", "size": "sm", "color": "#334155", "wrap": True}, {"type": "text", "text": "พิมพ์ ประวัติ เพื่อดูสถิติย้อนหลัง", "size": "sm", "color": "#334155"}]
-    footer = [button for button in (_uri_button("วันนี้", "today"), _uri_button("เวท", "programs"), _uri_button("ประวัติ", "history")) if button]
-    return _bubble("วิธีใช้ LINE Cal", rows, footer)
+    rows = [{"type": "text", "text": "📸 ส่งรูปอาหาร หรือพิมพ์ กิน ตามด้วยชื่อเมนู เช่น กิน ข้าวมันไก่พิเศษ", "size": "sm", "color": "#334155", "wrap": True}, {"type": "text", "text": "➕ กินหลายอย่าง คั่นด้วย + เช่น กิน ข้าวมันไก่ + น้ำส้ม", "size": "sm", "color": "#334155", "wrap": True}, {"type": "text", "text": "📊 พิมพ์ สรุป เพื่อดูข้อมูลวันนี้", "size": "sm", "color": "#334155"}, {"type": "text", "text": "🏋️ พิมพ์ เวท เพื่อเลือกโปรแกรมเวทและรายการคาร์ดิโอ", "size": "sm", "color": "#334155", "wrap": True}, {"type": "text", "text": "📖 พิมพ์ ประวัติ เพื่อดูสถิติย้อนหลัง", "size": "sm", "color": "#334155"}]
+    footer = [button for button in (_uri_button("📅 วันนี้", "today"), _uri_button("🏋️ เวท", "programs"), _uri_button("📖 ประวัติ", "history")) if button]
+    return _bubble("📘 วิธีใช้ LINE Cal", rows, footer)
 
 
 def create_profile_onboarding_card(user_id: str = "") -> Dict[str, Any]:
-    footer = [button for button in (_uri_button("เปิดโปรไฟล์", "profile", "primary"),) if button]
-    return _bubble("กรอกโปรไฟล์ก่อนเริ่มใช้งาน", [{"type": "text", "text": "กรอกข้อมูลร่างกายและเป้าหมาย เพื่อคำนวณเป้าหมายอาหารและเริ่มบันทึกข้อมูล", "size": "sm", "color": "#334155", "wrap": True}], footer, "#7C2D12")
+    footer = [button for button in (_uri_button("👤 เปิดโปรไฟล์", "profile", "primary"),) if button]
+    return _bubble("👤 กรอกโปรไฟล์ก่อนเริ่มใช้งาน", [{"type": "text", "text": "กรอกข้อมูลร่างกายและเป้าหมาย เพื่อคำนวณเป้าหมายอาหารและเริ่มบันทึกข้อมูล", "size": "sm", "color": "#334155", "wrap": True}], footer, "#7C2D12")
