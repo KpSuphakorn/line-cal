@@ -5,8 +5,11 @@ Settings and global SQLAlchemy engine can never consume a developer's real
 .env credentials or Supabase URL during local tests.
 """
 import atexit
+import json
 import os
 import tempfile
+
+import pytest
 
 
 _database_file = tempfile.NamedTemporaryFile(prefix="line-cal-pytest-", suffix=".db", delete=False)
@@ -31,3 +34,52 @@ def _remove_test_database() -> None:
         os.unlink(_database_file.name)
     except FileNotFoundError:
         pass
+
+
+@pytest.fixture
+def boom_genai():
+    """A fake google.generativeai module whose model always fails to call."""
+    class _BoomModel:
+        def generate_content(self, *args, **kwargs):
+            raise RuntimeError("upstream unavailable")
+
+    class _BoomGenAI:
+        @staticmethod
+        def configure(**kwargs):
+            pass
+
+        @staticmethod
+        def GenerativeModel(*args, **kwargs):
+            return _BoomModel()
+
+    return _BoomGenAI()
+
+
+@pytest.fixture
+def flaky_genai_factory():
+    """A fake google.generativeai module that fails on one model name and succeeds on any other."""
+    def _make(failing_model: str, success_items: list[dict]):
+        class _Response:
+            text = json.dumps({"items": success_items})
+
+        class _Model:
+            def __init__(self, name):
+                self.name = name
+
+            def generate_content(self, *args, **kwargs):
+                if self.name == failing_model:
+                    raise RuntimeError("429 quota exceeded")
+                return _Response()
+
+        class _FlakyGenAI:
+            @staticmethod
+            def configure(**kwargs):
+                pass
+
+            @staticmethod
+            def GenerativeModel(name, *args, **kwargs):
+                return _Model(name)
+
+        return _FlakyGenAI()
+
+    return _make

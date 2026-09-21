@@ -1,12 +1,14 @@
 """Gemini AI Text-based Food Parsing Engine for natural language food logging."""
-import json
 import logging
 from typing import Dict, Any
 
 from app.config import settings
-from app.services.ai_errors import FoodAnalysisError
+from app.services.ai_errors import generate_food_json
 
 logger = logging.getLogger(__name__)
+
+# See ai_errors.generate_food_json for why these are pinned explicitly.
+FOOD_PARSE_MODELS = ("gemini-2.5-flash", "gemini-2.5-flash-lite")
 
 FOOD_PARSE_PROMPT = """คุณเป็นนักโภชนาการ AI ผู้เชี่ยวชาญด้านอาหารไทยและอาหารสากล
 ผู้ใช้จะพิมพ์รายการอาหารที่กินเข้ามา จงแยกเป็นรายการอิสระหลายรายการเมื่อมีหลายเมนู
@@ -42,46 +44,16 @@ def parse_food_text(text: str) -> Dict[str, Any]:
         logger.warning("Using mock Gemini text food response (GEMINI_API_KEY is not set).")
         return _default_food_response(clean_text)
 
-    try:
-        import google.generativeai as genai
-        genai.configure(api_key=settings.GEMINI_API_KEY)
+    import google.generativeai as genai
+    genai.configure(api_key=settings.GEMINI_API_KEY)
 
-        # Use standard production gemini model: gemini-flash-latest (1,500 RPD free tier)
-        model_name = "gemini-flash-latest"
-        try:
-            model = genai.GenerativeModel(model_name)
-        except Exception:
-            model = genai.GenerativeModel("gemini-1.5-flash")
-
-
-
-
-        response = model.generate_content(
-            [
-                FOOD_PARSE_PROMPT,
-                f"ผู้ใช้พิมพ์: {clean_text}"
-            ],
-            generation_config={
-                "response_mime_type": "application/json",
-                "temperature": 0.2
-            }
-        )
-
-        content_text = response.text.strip()
-        # Remove any lingering markdown
-        if content_text.startswith("```json"):
-            content_text = content_text[7:]
-        if content_text.startswith("```"):
-            content_text = content_text[3:]
-        if content_text.endswith("```"):
-            content_text = content_text[:-3]
-
-        data = json.loads(content_text.strip())
-        return data if isinstance(data.get("items"), list) else {"items": [data]}
-
-    except Exception as e:
-        logger.error(f"Error calling Gemini text food parse: {e}")
-        raise FoodAnalysisError("Gemini text food parse failed") from e
+    data = generate_food_json(
+        genai,
+        FOOD_PARSE_MODELS,
+        [FOOD_PARSE_PROMPT, f"ผู้ใช้พิมพ์: {clean_text}"],
+        log_label="text food parse",
+    )
+    return data if isinstance(data.get("items"), list) else {"items": [data]}
 
 
 def _default_food_response(food_name: str) -> Dict[str, Any]:

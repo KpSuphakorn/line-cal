@@ -14,9 +14,9 @@ from app.db.models import FoodAnalysisDraft, FoodCapture, FoodLog
 BANGKOK = ZoneInfo("Asia/Bangkok")
 CAPTURE_TTL = timedelta(hours=24)
 
-# Match the bounds FoodUpdatePayload/FoodDraftItemPayload enforce in main.py so a
-# malformed AI response (e.g. calories: 1e30) can't reach the DB unclamped just
-# because draft creation never passes through those Pydantic models.
+# Shared bound for food values, whether from an AI-parsed draft (this module)
+# or a LIFF edit (main.py's Pydantic models) — keeps a malformed AI response
+# (e.g. calories: 1e30) from reaching the DB unclamped.
 MAX_CALORIES = 100000.0
 MAX_MACRO_GRAMS = 10000.0
 

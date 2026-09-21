@@ -20,7 +20,16 @@ from app.services.fitness import (
 )
 from app.services.ai_vision import analyze_food_image
 from app.services.ai_errors import FoodAnalysisError
-from app.services.food_capture import get_editable_capture, serialize_capture, update_capture, confirm_capture, cancel_capture_result, ai_quota_remaining
+from app.services.food_capture import (
+    MAX_CALORIES,
+    MAX_MACRO_GRAMS,
+    get_editable_capture,
+    serialize_capture,
+    update_capture,
+    confirm_capture,
+    cancel_capture_result,
+    ai_quota_remaining,
+)
 from app.templates.flex_cards import create_food_analyzed_card
 from app.services.workouts import (
     create_cardio_session,
@@ -171,10 +180,10 @@ def webapp_dashboard():
 # ─── API Endpoints ───────────────────────────────────────────────
 
 class FoodUpdatePayload(BaseModel):
-    calories: Optional[float] = Field(default=None, ge=0, le=100000)
-    protein: Optional[float] = Field(default=None, ge=0, le=10000)
-    carbs: Optional[float] = Field(default=None, ge=0, le=10000)
-    fat: Optional[float] = Field(default=None, ge=0, le=10000)
+    calories: Optional[float] = Field(default=None, ge=0, le=MAX_CALORIES)
+    protein: Optional[float] = Field(default=None, ge=0, le=MAX_MACRO_GRAMS)
+    carbs: Optional[float] = Field(default=None, ge=0, le=MAX_MACRO_GRAMS)
+    fat: Optional[float] = Field(default=None, ge=0, le=MAX_MACRO_GRAMS)
     food_name: Optional[str] = Field(default=None, min_length=1, max_length=200)
     portion: Optional[str] = Field(default=None, max_length=150)
 
@@ -183,10 +192,10 @@ class FoodDraftItemPayload(BaseModel):
     id: Optional[int] = None
     food_name: str = Field(min_length=1, max_length=200)
     portion: str = Field(default="1 ที่", max_length=150)
-    calories: float = Field(default=0, ge=0, le=100000)
-    protein: float = Field(default=0, ge=0, le=10000)
-    carbs: float = Field(default=0, ge=0, le=10000)
-    fat: float = Field(default=0, ge=0, le=10000)
+    calories: float = Field(default=0, ge=0, le=MAX_CALORIES)
+    protein: float = Field(default=0, ge=0, le=MAX_MACRO_GRAMS)
+    carbs: float = Field(default=0, ge=0, le=MAX_MACRO_GRAMS)
+    fat: float = Field(default=0, ge=0, le=MAX_MACRO_GRAMS)
     confidence: Optional[float] = Field(default=None, ge=0, le=1)
     notes: Optional[str] = Field(default=None, max_length=1000)
 
