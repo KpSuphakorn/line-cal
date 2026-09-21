@@ -66,10 +66,17 @@ def create_food_analyzed_card(food_data: Dict[str, Any], capture_token: str, use
         ]})
     footer = []
     edit_url = webapp_uri("today", f"capture_token={urllib.parse.quote(capture_token)}")
+    footer.append(_button(
+        "✅ ยืนยันทั้งหมด",
+        {
+            "type": "postback",
+            "data": f"action=confirm_food_capture_chat&capture_token={urllib.parse.quote(capture_token, safe='')}",
+            "displayText": "ยืนยันรายการอาหาร",
+        },
+        "primary",
+    ))
     if edit_url:
         footer.append(_button("✏️ แก้ไขรายการ", {"type": "uri", "uri": edit_url}, "link"))
-    # Food captures always finish in the authenticated LIFF review form.  Do
-    # not mix in chat-level confirm/cancel actions that bypass editing.
     return _bubble(f"🥗 AI วิเคราะห์ {len(items)} รายการ", [{"type": "text", "text": f"รวมประมาณ {total:.0f} kcal • ตรวจสอบและแก้ไขก่อนยืนยัน", "size": "sm", "color": "#475569"}, *rows], footer, "#059669")
 
 

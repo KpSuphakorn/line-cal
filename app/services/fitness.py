@@ -390,8 +390,10 @@ def get_history_summary(
             "name": session.name,
             "type": session.session_type,
             "occurred_at": session.occurred_at.isoformat() if session.occurred_at else None,
-            "duration": round(session.estimated_duration_min or 0, 1),
-            "burned": round(session.estimated_calories or 0, 1),
+            # Keep history rows aligned with the canonical session serializer
+            # consumed by Today and the workout editor.
+            "estimated_duration_min": round(session.estimated_duration_min or 0, 1),
+            "estimated_calories": round(session.estimated_calories or 0, 1),
             "time": local_time.strftime("%H:%M"),
         })
 
@@ -413,19 +415,19 @@ def get_history_summary(
         daily_data.values(),
         key=lambda item: (item["calories_in"], item["date"]),
     ) if daily_data else None
-    years = set()
+    years = {datetime.now(BANGKOK).year, anchor.year}
     for value in db.query(FoodLog.logged_at).filter(FoodLog.user_id == user_id).all():
         years.add(as_bangkok(value[0]).year)
     for value in db.query(WorkoutSession.occurred_at).filter(WorkoutSession.user_id == user_id).all():
         years.add(as_bangkok(value[0]).year)
-    if not years:
-        years.add(anchor.year)
+    oldest_year = min(years)
+    newest_year = max(years)
     return {
         "period": period,
         "anchor": anchor.isoformat(),
         "start_date": start_date.isoformat(),
         "end_date": end_date.isoformat(),
-        "available_years": sorted(years),
+        "available_years": list(range(oldest_year, newest_year + 1)),
         "summary": {
             "total_calories_in": total_in,
             "total_calories_burned": total_burned,

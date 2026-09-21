@@ -535,3 +535,56 @@ def test_history_periods_are_bounded_and_directly_selectable(as_user):
     assert month.json()["start_date"] == "2026-09-01"
     assert month.json()["end_date"] == "2026-09-30"
     assert len(month.json()["daily_breakdown"]) == 30
+
+
+def test_history_workout_details_use_today_session_display_fields_and_dynamic_years(as_user):
+    from datetime import datetime, timezone
+    from zoneinfo import ZoneInfo
+    from app.db.database import SessionLocal
+    from app.db.models import FoodLog
+
+    user_id = "history-workout-details"
+    current_year = datetime.now(ZoneInfo("Asia/Bangkok")).year
+    complete_profile(as_user, user_id)
+    program_id = client.get("/api/me/workout-programs").json()["programs"][0]["id"]
+    strength = client.post(
+        "/api/me/workout-sessions",
+        json={"program_id": program_id, "occurred_at": f"{current_year}-06-10T10:00:00Z"},
+    ).json()
+    preset = client.post("/api/me/cardio-presets", json={
+        "activity": "เดิน",
+        "duration_min": 25,
+    }).json()
+    cardio = client.post(
+        "/api/me/workout-sessions/cardio",
+        json={"preset_id": preset["id"], "occurred_at": f"{current_year}-06-11T10:00:00Z"},
+    ).json()
+
+    db = SessionLocal()
+    db.add(FoodLog(
+        user_id=user_id,
+        food_name="ข้อมูลปีเก่า",
+        calories=100,
+        logged_at=datetime(2023, 6, 10, 10, tzinfo=timezone.utc),
+    ))
+    db.add(FoodLog(
+        user_id=user_id,
+        food_name="ข้อมูลปีคั่นกลาง",
+        calories=100,
+        logged_at=datetime(2025, 6, 10, 10, tzinfo=timezone.utc),
+    ))
+    db.commit()
+    db.close()
+
+    history = client.get(f"/api/me/history?period=month&anchor={current_year}-06-01")
+    assert history.status_code == 200
+    data = history.json()
+    assert data["available_years"] == list(range(2023, current_year + 1))
+    sessions = {
+        item["id"]: item
+        for day in data["daily_breakdown"]
+        for item in day["workout_logs"]
+    }
+    for session in (strength, cardio):
+        assert sessions[session["id"]]["estimated_duration_min"] == session["estimated_duration_min"]
+        assert sessions[session["id"]]["estimated_calories"] == session["estimated_calories"]
