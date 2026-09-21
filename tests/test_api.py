@@ -65,10 +65,13 @@ def test_summary_endpoint(as_user):
     user_id = "user_suphakorn_api"
     as_user(user_id)
     response = client.get("/api/me/today")
+    assert response.status_code == 409
+    complete_profile(as_user, user_id)
+    response = client.get("/api/me/today")
     assert response.status_code == 200
     data = response.json()
-    assert data["target_kcal"] == 0.0
-    assert data["remaining_kcal"] == 0.0
+    assert data["target_kcal"] == 2100.0
+    assert data["remaining_kcal"] == 2100.0
     assert "food_logs" in data
     assert "workout_logs" in data
 
@@ -129,6 +132,9 @@ def test_webapp_dashboard_endpoint():
     assert "openCardio(" not in response.text
     assert "cardio=1" not in response.text
     assert "บันทึก Cardio" not in response.text
+    assert "const CARDIO_CHOICES" in response.text
+    assert "knownActivity?savedActivity:'อื่นๆ','select'" in response.text
+    assert "button('บันทึกวันนี้',()=>logProgram" in response.text
     assert "history-controls" in response.text
     assert "program-footer" in response.text
     assert "node('fieldset'" in response.text
@@ -166,7 +172,7 @@ def test_webapp_dashboard_endpoint():
     assert "/api/user/" not in response.text
 
 
-def test_user_today_and_monthly_api(as_user):
+def test_user_today_api(as_user):
     user_id = "test_user_webapp"
     complete_profile(as_user, user_id)
     # 1. Today summary
@@ -175,13 +181,6 @@ def test_user_today_and_monthly_api(as_user):
     today_data = res_today.json()
     assert today_data["target_kcal"] == 2100.0
 
-    # 2. Monthly summary
-    res_monthly = client.get("/api/me/monthly?year=2026&month=9")
-    assert res_monthly.status_code == 200
-    month_data = res_monthly.json()
-    assert "daily_breakdown" in month_data
-    assert "avg_daily_calories" in month_data
-    assert "month_name" in month_data
 
 
 def test_food_update_and_delete_api(as_user):
@@ -375,7 +374,7 @@ def test_food_crud_is_tenant_scoped_and_partial_updates_preserve_macros(as_user)
     food_id = food.id
     db.close()
 
-    as_user("food-owner-a")
+    complete_profile(as_user, "food-owner-a")
     update_other = client.put(f"/api/me/food/{food_id}", json={"calories": 1})
     delete_other = client.delete(f"/api/me/food/{food_id}")
     assert update_other.status_code == 404
@@ -404,7 +403,7 @@ def test_food_payload_rejects_negative_and_non_finite_values(as_user, payload):
 def test_monthly_api_rejects_invalid_month(as_user):
     as_user("monthly-validation-owner")
     response = client.get("/api/me/monthly?year=2026&month=13")
-    assert response.status_code == 422
+    assert response.status_code == 404
 
 
 def test_cardio_presets_are_owned_and_snapshot_sessions(as_user):
@@ -466,6 +465,62 @@ def test_cardio_preset_name_defaults_to_activity(as_user):
     })
     assert response.status_code == 200
     assert response.json()["name"] == "เดิน"
+
+
+def test_cardio_session_update_preserves_other_activity_name(as_user):
+    user_id = "cardio-session-other-update"
+    complete_profile(as_user, user_id)
+    preset = client.post("/api/me/cardio-presets", json={
+        "activity": "อื่นๆ",
+        "custom_name": "กระโดดเชือก",
+        "duration_min": 20,
+    }).json()
+    session = client.post("/api/me/workout-sessions/cardio", json={"preset_id": preset["id"]}).json()
+
+    updated = client.put(f"/api/me/workout-sessions/{session['id']}", json={
+        "cardio": {"activity": "อื่นๆ", "custom_name": "เต้น", "duration_min": 25},
+    })
+    assert updated.status_code == 200
+    assert updated.json()["cardio"]["activity"] == "เต้น"
+
+    retained = client.put(f"/api/me/workout-sessions/{session['id']}", json={
+        "cardio": {"duration_min": 30},
+    })
+    assert retained.status_code == 200
+    assert retained.json()["cardio"]["activity"] == "เต้น"
+
+
+def test_cardio_session_update_clears_fields_invalid_for_new_activity(as_user):
+    user_id = "cardio-session-clears-stale-fields"
+    complete_profile(as_user, user_id)
+    preset = client.post("/api/me/cardio-presets", json={
+        "activity": "เดินชัน",
+        "duration_min": 30,
+        "incline_pct": 8,
+        "speed_kmh": 5,
+    }).json()
+    session = client.post("/api/me/workout-sessions/cardio", json={"preset_id": preset["id"]}).json()
+    assert session["cardio"]["incline_pct"] == 8
+    assert session["cardio"]["speed_kmh"] == 5
+
+    updated = client.put(f"/api/me/workout-sessions/{session['id']}", json={
+        "cardio": {"activity": "เดิน", "duration_min": 25},
+    })
+    assert updated.status_code == 200
+    assert updated.json()["cardio"] == {
+        "activity": "เดิน",
+        "duration_min": 25,
+        "incline_pct": None,
+        "speed_kmh": None,
+        "distance_km": None,
+        "met": 3.5,
+    }
+
+    listed = client.get("/api/me/workout-sessions").json()["sessions"]
+    saved = next(item for item in listed if item["id"] == session["id"])
+    assert saved["cardio"]["incline_pct"] is None
+    assert saved["cardio"]["speed_kmh"] is None
+    assert saved["cardio"]["distance_km"] is None
 
 
 def test_history_periods_are_bounded_and_directly_selectable(as_user):

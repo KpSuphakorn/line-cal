@@ -15,11 +15,8 @@ from app.services.fitness import (
     calculate_tdee,
     get_daily_summary,
     get_history_summary,
-    get_monthly_summary,
     get_or_create_user,
-    get_past_food_history,
     get_user_programs,
-    get_weekly_stats,
     update_food_log,
     update_exercise_weight,
     update_user_profile,
@@ -102,17 +99,6 @@ def test_daily_summary_workflow_after_profile_setup(db_session):
     assert len(summary["food_logs"]) == 2
     assert len(summary["workout_logs"]) == 2
 
-    weekly = get_weekly_stats(db_session, user_id, days=7)
-    assert weekly["total_calories_in"] == 625.0
-    assert weekly["total_calories_burned"] == summary["calories_burned"]
-    assert weekly["weights_completed"] == 1
-    assert weekly["cardio_count"] == 1
-
-    history = get_past_food_history(db_session, user_id, limit=5)
-    assert len(history) == 2
-    assert history[0]["name"] in ["กล้วยหอม 1 ลูก", "ข้าวกะเพราอกไก่"]
-
-
 def test_cardio_session_requires_preset(db_session):
     user_id = "test_user_cardio_requires_preset"
     complete_profile(db_session, user_id)
@@ -142,14 +128,9 @@ def test_user_programs_are_independent_and_editable(db_session):
     assert refreshed_pec_dec["weight"] == 45.0
 
 
-def test_monthly_summary_handles_incomplete_profile_and_food_crud(db_session):
-    user_id = "test_user_monthly"
+def test_food_crud_for_incomplete_profile(db_session):
+    user_id = "test_user_food_crud"
     get_or_create_user(db_session, user_id, settings)
-
-    monthly_before = get_monthly_summary(db_session, user_id, datetime.now().year, datetime.now().month)
-    assert monthly_before["target_kcal"] == 0.0
-    assert monthly_before["target_protein"] == 0.0
-    assert all(not day["protein_goal_met"] for day in monthly_before["daily_breakdown"])
 
     food = FoodLog(
         user_id=user_id,
@@ -163,10 +144,6 @@ def test_monthly_summary_handles_incomplete_profile_and_food_crud(db_session):
     db_session.add(food)
     db_session.commit()
     db_session.refresh(food)
-
-    monthly = get_monthly_summary(db_session, user_id, datetime.now().year, datetime.now().month)
-    assert monthly["days_logged"] >= 1
-    assert len(monthly["daily_breakdown"]) == monthly["total_days"]
 
     updated = update_food_log(db_session, food.id, {"calories": 400.0, "food_name": "ข้าวไข่เจียวไร้น้ำมัน"})
     assert updated is not None
@@ -197,7 +174,7 @@ def test_bangkok_day_groups_utc_midnight_crossing_entries(db_session):
     assert summary["calories_in"] == 100
     assert summary["food_logs"][0]["time"] == "00:30"
 
-    monthly = get_monthly_summary(db_session, user_id, 2026, 9)
+    monthly = get_history_summary(db_session, user_id, "month", date(2026, 9, 20))
     days = {item["date"]: item["calories_in"] for item in monthly["daily_breakdown"]}
     assert days["2026-09-20"] == 100
     assert days["2026-09-19"] == 200

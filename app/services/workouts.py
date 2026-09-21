@@ -396,10 +396,40 @@ def update_session(db: Session, user_id: str, session_id: int, data: dict[str, A
         cardio = session.cardio
         if cardio:
             details = data["cardio"]
-            for key in ("activity", "duration_min", "incline_pct", "speed_kmh", "distance_km"):
+            for key in ("duration_min", "incline_pct", "speed_kmh", "distance_km"):
                 if key in details:
                     setattr(cardio, key, details[key])
-            cardio.activity = str(cardio.activity or "อื่นๆ")[:80]
+            raw_activity = details.get("activity")
+            if raw_activity is None:
+                activity = str(cardio.activity or "อื่นๆ").strip()[:80]
+            else:
+                activity = str(raw_activity).strip()[:80]
+                if activity == "อื่นๆ":
+                    custom_name = str(details.get("custom_name") or "").strip()[:80]
+                    # CardioDetails stores the resolved custom label rather than
+                    # a separate activity category. Preserve that label when a
+                    # client submits the generic "other" option without a new
+                    # custom name.
+                    activity = custom_name or (
+                        str(cardio.activity).strip()[:80]
+                        if cardio.activity not in CARDIO_ACTIVITIES
+                        else "อื่นๆ"
+                    )
+                elif activity not in CARDIO_ACTIVITIES:
+                    activity = "อื่นๆ"
+            cardio.activity = activity
+            # The editor sends only fields relevant to the selected activity.
+            # Clear fields that are not valid for the new activity so values
+            # copied from the previous activity cannot remain in history.
+            if activity == "เดินชัน":
+                cardio.distance_km = None
+            elif activity == "วิ่ง":
+                cardio.incline_pct = None
+                cardio.speed_kmh = None
+            else:
+                cardio.incline_pct = None
+                cardio.speed_kmh = None
+                cardio.distance_km = None
             cardio.met = CARDIO_METS.get(cardio.activity, CARDIO_METS["อื่นๆ"])
             session.estimated_duration_min = float(cardio.duration_min)
             if "estimated_calories" not in data:

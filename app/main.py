@@ -15,7 +15,7 @@ from app.auth import AuthenticatedUser, get_current_user
 from app.db.database import init_db, get_db
 from app.services.line_handler import handle_line_events
 from app.services.fitness import (
-    get_daily_summary, get_or_create_user, get_monthly_summary, get_history_summary, update_food_log, delete_food_log,
+    get_daily_summary, get_or_create_user, get_history_summary, update_food_log, delete_food_log,
     get_user_profile, update_user_profile, is_user_profile_customized, delete_user_account
 )
 from app.services.ai_vision import analyze_food_image
@@ -218,18 +218,8 @@ class UserProfilePayload(BaseModel):
 # Canonical owner-derived routes. These never accept an owner ID from the browser.
 @app.get("/api/me/today")
 def api_me_today(db: Session = Depends(get_db), current_user: AuthenticatedUser = Depends(get_current_user)):
-    get_or_create_user(db, current_user.subject, settings)
+    require_completed_profile(current_user.subject, db)
     return get_daily_summary(db, current_user.subject)
-
-
-@app.get("/api/me/monthly")
-def api_me_monthly(year: int | None = Query(default=None), month: int | None = Query(default=None), db: Session = Depends(get_db), current_user: AuthenticatedUser = Depends(get_current_user)):
-    from zoneinfo import ZoneInfo
-    now = datetime.now(ZoneInfo("Asia/Bangkok"))
-    year, month = year or now.year, month or now.month
-    if month < 1 or month > 12:
-        raise HTTPException(status_code=422, detail="month must be between 1 and 12")
-    return get_monthly_summary(db, current_user.subject, year, month)
 
 
 @app.get("/api/me/history")
@@ -239,6 +229,7 @@ def api_me_history(
     db: Session = Depends(get_db),
     current_user: AuthenticatedUser = Depends(get_current_user),
 ):
+    require_completed_profile(current_user.subject, db)
     try:
         anchor_date = date.fromisoformat(anchor) if anchor else None
         return get_history_summary(db, current_user.subject, period, anchor_date)
@@ -419,6 +410,7 @@ def api_me_workout_sessions(limit: int = Query(default=50, ge=1, le=200), db: Se
 
 @app.get("/api/me/workout-sessions/{session_id}")
 def api_me_get_workout_session(session_id: int, db: Session = Depends(get_db), current_user: AuthenticatedUser = Depends(get_current_user)):
+    require_completed_profile(current_user.subject, db)
     session = get_session(db, current_user.subject, session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Workout session not found")
@@ -447,6 +439,7 @@ def api_me_delete_workout_session(session_id: int, db: Session = Depends(get_db)
 
 @app.put("/api/me/food/{food_id}")
 def api_me_update_food(food_id: int, payload: FoodUpdatePayload, db: Session = Depends(get_db), current_user: AuthenticatedUser = Depends(get_current_user)):
+    require_completed_profile(current_user.subject, db)
     food = update_food_log(
         db,
         food_id,
@@ -460,6 +453,7 @@ def api_me_update_food(food_id: int, payload: FoodUpdatePayload, db: Session = D
 
 @app.delete("/api/me/food/{food_id}")
 def api_me_delete_food(food_id: int, db: Session = Depends(get_db), current_user: AuthenticatedUser = Depends(get_current_user)):
+    require_completed_profile(current_user.subject, db)
     if not delete_food_log(db, food_id, user_id=current_user.subject):
         raise HTTPException(status_code=404, detail="Food log not found")
     return {"status": "success", "message": "Food log deleted"}
@@ -468,17 +462,20 @@ def api_me_delete_food(food_id: int, db: Session = Depends(get_db), current_user
 @app.get("/api/me/food-captures/{token}")
 def api_me_food_capture(token: str, db: Session = Depends(get_db), current_user: AuthenticatedUser = Depends(get_current_user)):
     """Return one authenticated user's editable multi-item food draft."""
+    require_completed_profile(current_user.subject, db)
     return serialize_capture(get_capture(db, current_user.subject, token))
 
 
 @app.put("/api/me/food-captures/{token}")
 def api_me_update_food_capture(token: str, payload: FoodDraftPayload, db: Session = Depends(get_db), current_user: AuthenticatedUser = Depends(get_current_user)):
+    require_completed_profile(current_user.subject, db)
     capture = update_capture(db, current_user.subject, token, [item.model_dump(exclude_none=True) for item in payload.items])
     return serialize_capture(capture)
 
 
 @app.post("/api/me/food-captures/{token}/confirm")
 def api_me_confirm_food_capture(token: str, db: Session = Depends(get_db), current_user: AuthenticatedUser = Depends(get_current_user)):
+    require_completed_profile(current_user.subject, db)
     entries = confirm_capture(db, current_user.subject, token)
     if not entries:
         raise HTTPException(status_code=409, detail="Food capture is expired, cancelled, or already unavailable")
@@ -487,6 +484,7 @@ def api_me_confirm_food_capture(token: str, db: Session = Depends(get_db), curre
 
 @app.post("/api/me/food-captures/{token}/cancel")
 def api_me_cancel_food_capture(token: str, db: Session = Depends(get_db), current_user: AuthenticatedUser = Depends(get_current_user)):
+    require_completed_profile(current_user.subject, db)
     if not cancel_capture(db, current_user.subject, token):
         raise HTTPException(status_code=409, detail="Food capture is already confirmed or unavailable")
     return {"status": "cancelled"}

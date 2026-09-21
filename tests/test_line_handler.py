@@ -1,7 +1,7 @@
 """Unit tests for LINE webhook event handling and onboarding dialog flows."""
 from unittest.mock import MagicMock, patch
 import pytest
-from linebot.v3.webhooks import FollowEvent, MessageEvent, TextMessageContent
+from linebot.v3.webhooks import FollowEvent, MessageEvent, PostbackEvent, TextMessageContent
 from linebot.v3.messaging import TextMessage, FlexMessage
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -76,9 +76,10 @@ def test_help_guide_text_command(mock_get_clients):
     assert isinstance(call_args.messages[0], FlexMessage)
 
 
+@patch("app.services.line_handler.reply_webapp")
 @patch("app.services.line_handler.get_line_clients")
-def test_profile_unconfigured_command(mock_get_clients):
-    """Verify 'โปรไฟล์' prompts unconfigured user with onboarding card."""
+def test_profile_command_is_direct_entrypoint(mock_get_clients, mock_reply_webapp):
+    """Profile remains reachable directly before onboarding is complete."""
     mock_messaging_api = MagicMock()
     mock_get_clients.return_value = (MagicMock(), mock_messaging_api, MagicMock())
 
@@ -92,10 +93,8 @@ def test_profile_unconfigured_command(mock_get_clients):
 
     handle_line_events([event], db)
 
-    assert mock_messaging_api.reply_message.called
-    call_args = mock_messaging_api.reply_message.call_args[0][0]
-    assert len(call_args.messages) == 1
-    assert isinstance(call_args.messages[0], FlexMessage)
+    mock_reply_webapp.assert_called_once()
+    assert mock_reply_webapp.call_args.args[2:] == ("profile", "เปิดโปรไฟล์")
 
 
 @patch("app.services.line_handler.get_line_clients")
@@ -143,6 +142,26 @@ def test_history_command_uses_single_webapp_entrypoint(mock_get_clients, _profil
 
     mock_reply_webapp.assert_called_once()
     assert mock_reply_webapp.call_args.args[2:] == ("history", "เปิดประวัติ")
+
+
+@pytest.mark.parametrize("action", ["confirm_food_capture", "cancel", "cancel_food_capture", "retired_action"])
+@patch("app.services.line_handler.reply_webapp")
+@patch("app.services.line_handler.get_line_clients")
+def test_stale_or_unknown_postback_uses_safe_today_entrypoint(mock_get_clients, mock_reply_webapp, action):
+    mock_get_clients.return_value = (MagicMock(), MagicMock(), MagicMock())
+    db = get_test_db()
+    event = MagicMock(spec=PostbackEvent)
+    event.reply_token = "reply_tok_stale"
+    event.webhook_event_id = f"event-{action}"
+    event.source = MagicMock()
+    event.source.user_id = "user_stale"
+    event.postback = MagicMock()
+    event.postback.data = f"action={action}&capture_token=old-token"
+
+    handle_line_events([event], db)
+
+    mock_reply_webapp.assert_called_once()
+    assert mock_reply_webapp.call_args.args[2:] == ("today", "เปิดวันนี้")
 
 
 @patch("app.services.line_handler.get_line_clients")

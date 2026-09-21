@@ -38,7 +38,7 @@ from app.services.fitness import (
 from app.services.workouts import create_cardio_session, create_strength_session, list_cardio_presets, list_programs
 from app.services.ai_vision import analyze_food_image
 from app.services.ai_chat import parse_food_text
-from app.services.food_capture import create_capture, serialize_capture, confirm_capture, cancel_capture, ai_quota_remaining
+from app.services.food_capture import create_capture, serialize_capture, ai_quota_remaining
 from app.templates.flex_cards import (
     create_food_analyzed_card,
     create_daily_dashboard_card,
@@ -98,9 +98,9 @@ def reply_text(messaging_api: MessagingApi, reply_token: str, text: str, quick_r
     )
 
 
-def reply_webapp(messaging_api: MessagingApi, reply_token: str, tab: str, label: str) -> None:
+def reply_webapp(messaging_api: MessagingApi, reply_token: str, tab: str, label: str, query: str = "") -> None:
     """Send one compact LIFF entry point for a page that belongs in the Web App."""
-    uri = webapp_uri(tab)
+    uri = webapp_uri(tab, query)
     if not uri:
         reply_text(messaging_api, reply_token, "ยังเปิดเว็บไม่ได้ กรุณาตั้งค่า LIFF_ID ในระบบก่อนครับ")
         return
@@ -232,18 +232,27 @@ def handle_text_message(event: MessageEvent, user_id: str, messaging_api: Messag
     """Handle the explicit LINE command contract."""
     raw_text = event.message.text.strip()
     text = raw_text.lower()
-    if any(k in text for k in ["สวัสดี", "หวัดดี", "hello", "hi"]):
-        reply_text(messaging_api, event.reply_token, "สวัสดีครับ พิมพ์ กิน ตามด้วยชื่ออาหาร หรือพิมพ์ วิธีใช้ เพื่อดูคำสั่ง")
-        return
 
-    if any(k in text for k in ["วิธีใช้", "วิธีใช้งาน", "คู่มือ", "สอน", "help"]):
-        reply_flex(messaging_api, event.reply_token, "คู่มือการใช้งาน LINE Cal", create_welcome_guide_card(user_id))
-        return
-
+    # Food text is a capture command, so match it before greeting/help checks.
+    # This keeps the photo and text paths on the same AI-draft review flow.
     if text.startswith("กิน "):
         if not require_completed_profile(db, user_id, messaging_api, event.reply_token):
             return
         _capture_food(db, user_id, "text", getattr(event.message, "id", None), lambda: parse_food_text(raw_text), messaging_api, event.reply_token)
+        return
+
+    if text in {"สวัสดี", "หวัดดี", "hello", "hi"}:
+        reply_text(messaging_api, event.reply_token, "สวัสดีครับ พิมพ์ กิน ตามด้วยชื่ออาหาร หรือพิมพ์ วิธีใช้ เพื่อดูคำสั่ง")
+        return
+
+    if text in {"วิธีใช้", "วิธีใช้งาน", "คู่มือ", "สอน", "help"}:
+        reply_flex(messaging_api, event.reply_token, "คู่มือการใช้งาน LINE Cal", create_welcome_guide_card(user_id))
+        return
+
+    if text in {"โปรไฟล์", "profile"}:
+        # Profile is the one page that must remain reachable before onboarding
+        # is complete, including when the user has no Rich Menu available.
+        reply_webapp(messaging_api, event.reply_token, "profile", "เปิดโปรไฟล์")
         return
 
     if text in {"สรุป", "summary"}:
@@ -281,27 +290,10 @@ def handle_postback_event(event: PostbackEvent, user_id: str, messaging_api: Mes
     query_params = dict(urllib.parse.parse_qsl(event.postback.data))
     action = query_params.get("action")
 
-    if action == "confirm_food_capture":
+    if action == "log_workout":
         if not require_completed_profile(db, user_id, messaging_api, event.reply_token):
             return
-        capture_token = query_params.get("capture_token")
-        logs = confirm_capture(db, user_id, capture_token or "")
-        if not logs:
-            reply_text(messaging_api, event.reply_token, "รายการนี้หมดอายุหรือถูกบันทึกไปแล้วครับ")
-            return
-        summary = get_daily_summary(db, user_id)
-        card = create_daily_dashboard_card(summary, last_food_id=logs[-1].id)
-        reply_flex(messaging_api, event.reply_token, f"บันทึกอาหาร {len(logs)} รายการเรียบร้อย!", card)
-
-    elif action in {"cancel", "cancel_food_capture"}:
-        if query_params.get("capture_token"):
-            cancel_capture(db, user_id, query_params["capture_token"])
-        reply_text(messaging_api, event.reply_token, "ยกเลิกการบันทึกรายการอาหารเรียบร้อยครับ")
-
-    elif action == "log_workout":
-        if not require_completed_profile(db, user_id, messaging_api, event.reply_token):
-            return
-        program_id = query_params.get("program_id") or query_params.get("split_id")
+        program_id = query_params.get("program_id")
         try:
             session = log_program_session(
                 db,
@@ -332,26 +324,31 @@ def handle_postback_event(event: PostbackEvent, user_id: str, messaging_api: Mes
         reply_flex(messaging_api, event.reply_token, "บันทึกคาร์ดิโอสำเร็จ", card)
 
     elif action == "view_dashboard":
-        summary = get_daily_summary(db, user_id)
-        card = create_daily_dashboard_card(summary)
-        reply_flex(messaging_api, event.reply_token, "สรุปยอดวันนี้", card)
+        if not require_completed_profile(db, user_id, messaging_api, event.reply_token):
+            return
+        reply_webapp(messaging_api, event.reply_token, "today", "เปิดวันนี้")
 
     elif action == "view_workouts":
-        carousel = create_workout_splits_carousel(
-            list_programs(db, user_id),
-            user_id=user_id,
-            cardio_presets=list_cardio_presets(db, user_id),
-        )
-        reply_flex(messaging_api, event.reply_token, "โปรแกรมออกกำลังกายของคุณ", carousel)
+        if not require_completed_profile(db, user_id, messaging_api, event.reply_token):
+            return
+        reply_webapp(messaging_api, event.reply_token, "programs", "เปิดโปรแกรม")
 
     elif action == "view_history":
         if not require_completed_profile(db, user_id, messaging_api, event.reply_token):
             return
         reply_webapp(messaging_api, event.reply_token, "history", "เปิดประวัติ")
 
-    elif action in ["view_help", "view_guide", "view_main_menu"]:
-        guide_card = create_welcome_guide_card(user_id)
-        reply_flex(messaging_api, event.reply_token, "คู่มือการใช้งาน LINE Cal", guide_card)
+    elif action in {"confirm_food_capture", "cancel", "cancel_food_capture"}:
+        # These actions belong to the retired chat-level food flow.  Never
+        # confirm or cancel a capture from a stale card; send the user back to
+        # the authenticated Today/review entry point instead.
+        reply_webapp(messaging_api, event.reply_token, "today", "เปิดวันนี้")
+
+    else:
+        # Old Rich Menu/Flex cards can outlive a deploy.  Acknowledge safely
+        # with one canonical entry point instead of silently consuming them.
+        reply_webapp(messaging_api, event.reply_token, "today", "เปิดวันนี้")
+
 
 
 

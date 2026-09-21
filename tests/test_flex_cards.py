@@ -44,10 +44,9 @@ def test_food_analyzed_card_valid():
     assert "2 รายการ" in card_dict["header"]["contents"][0]["text"]
     footer_actions = [item["action"] for item in card_dict["footer"]["contents"]]
     assert any(action.get("label") == "✏️ แก้ไขรายการ" for action in footer_actions)
-    assert any(
-        action.get("data") == "action=confirm_food_capture&capture_token=test_temp_id"
-        for action in footer_actions
-    )
+    assert len(footer_actions) == 1
+    assert footer_actions[0].get("type") == "uri"
+    assert "capture_token=test_temp_id" in footer_actions[0].get("uri", "")
 
 
 def test_daily_dashboard_card_valid():
@@ -74,7 +73,7 @@ def test_daily_dashboard_card_valid():
     container = FlexContainer.from_dict(card_dict)
     assert container.type == "bubble"
     assert "วันนี้" in card_dict["header"]["contents"][0]["text"]
-    assert "action=view_history" in str(card_dict)
+    assert "tab=history" in str(card_dict)
 
 
 def test_workout_splits_carousel_valid():
@@ -202,3 +201,23 @@ def test_webapp_uri_uses_direct_endpoint_only_outside_production(monkeypatch):
 
     monkeypatch.setattr(settings, "APP_ENV", "production")
     assert webapp_uri("history") == ""
+
+
+def test_cards_omit_uri_actions_when_webapp_is_unconfigured(monkeypatch):
+    monkeypatch.setattr(settings, "LIFF_ID", None)
+    monkeypatch.setattr(settings, "APP_ENV", "production")
+    monkeypatch.setattr(settings, "WEBAPP_BASE_URL", "")
+
+    cards = [
+        create_daily_dashboard_card({"target_kcal": 1800}),
+        create_workout_logged_card("เดิน", 100),
+        create_welcome_guide_card(),
+        create_profile_onboarding_card(),
+        create_profile_summary_card({"name": "ผู้ใช้"}),
+        create_workout_splits_carousel(
+            [{"id": 1, "name": "Push", "exercises": []}],
+            cardio_presets=[{"id": 2, "name": "เดิน", "activity": "เดิน", "duration_min": 20}],
+        ),
+    ]
+
+    assert all('"type": "uri"' not in str(card) for card in cards)
