@@ -52,24 +52,17 @@ from app.templates.flex_cards import (
 logger = logging.getLogger(__name__)
 
 WELCOME_INTRO_TEXT = (
-    "💙 สวัสดี! เราชื่อ LINE Cal ผู้ช่วยบันทึกข้อมูลอาหารและคำนวณแคลอรี่อัจฉริยะของคุณ\n\n"
-    "🔬 การใช้งาน LINE Cal นี้เป็นส่วนหนึ่งของการวิจัยและพัฒนาเทคโนโลยีปัญญาประดิษฐ์ (AI) ด้านสุขภาพ, อาหารและโภชนาการ\n\n"
-    "🙏 ขอขอบพระคุณที่ร่วมเป็นส่วนหนึ่งในการต่อยอดโปรเจกต์นี้ และหากมีข้อผิดพลาดประการใดขออภัยมา ณ ที่นี้ เราพร้อมที่จะปรับปรุง LINE Cal ให้ดียิ่งขึ้น\n\n"
-    "💬 คำแนะนำรวมถึงข้อมูลจาก LINE Cal เป็นเพียงข้อมูลและการประเมินเบื้องต้นเท่านั้น"
+    "สวัสดีครับ LINE Cal ช่วยบันทึกอาหารและการออกกำลังกาย\n\n"
+    "ข้อมูลจาก AI เป็นการประเมินเบื้องต้น โปรดตรวจสอบก่อนยืนยัน"
 )
 
 WELCOME_FEATURES_TEXT = (
-    "💙💙 น้อง LINE Cal ทำอะไรได้บ้าง 💙💙\n\n"
-    "📸 ถ่ายภาพอาหาร:\n"
-    "ส่งภาพอาหารที่คุณทานในแต่ละวัน เพื่อรับข้อมูลโภชนาการ แคลอรี่ โปรตีน คาร์บ ไขมัน แล้วแก้ไขก่อนยืนยันได้\n\n"
-    "🍲 บันทึกอาหารจากการพิมพ์แชท:\n"
-    "พิมพ์ 'กิน' + เว้นวรรค + ชื่อเมนู (เช่น 'กิน ข้าวมันไก่พิเศษ') เพื่อเข้าสู่ flow เดียวกับการถ่ายรูป\n\n"
-    "🏋️ ตารางเวท & คาร์ดิโอ:\n"
-    "พิมพ์ 'ออกกำลังกาย' หรือ 'โปรแกรม' เพื่อเลือกโปรแกรมของคุณ\n\n"
-    "📊 สรุปยอดบาลานซ์วันนี้:\n"
-    "พิมพ์ 'สรุป' เพื่อดูงบแคลอรี่คงเหลือและโปรตีนวันนี้\n\n"
-    "🎯 ข้อมูลส่วนตัวและเป้าหมาย:\n"
-    "เปิดโปรไฟล์จากเมนูหลักหรือเว็บ เพื่อแก้ไขข้อมูลส่วนตัวและเป้าหมาย"
+    "เริ่มใช้งาน\n\n"
+    "ส่งรูปอาหาร หรือพิมพ์ กิน ตามด้วยชื่อเมนู เช่น กิน ข้าวมันไก่พิเศษ\n\n"
+    "พิมพ์ ออกกำลังกาย หรือ โปรแกรม เพื่อเลือกโปรแกรมและรายการคาร์ดิโอ\n\n"
+    "พิมพ์ สรุป เพื่อดูข้อมูลวันนี้\n\n"
+    "พิมพ์ ประวัติ เพื่อดูสถิติย้อนหลัง\n\n"
+    "เปิดโปรไฟล์จากเมนูหลักเพื่อแก้ไขข้อมูลส่วนตัวและเป้าหมาย"
 )
 
 
@@ -137,7 +130,7 @@ def require_completed_profile(db: Session, user_id: str, messaging_api: Messagin
     reply_flex(
         messaging_api,
         reply_token,
-        "กรุณาตั้งค่าโปรไฟล์ก่อนเริ่มบันทึก",
+        "กรุณาตั้งค่าโปรไฟล์ให้ครบก่อนเริ่มใช้งาน",
         create_profile_onboarding_card(user_id),
     )
     return False
@@ -240,7 +233,7 @@ def handle_text_message(event: MessageEvent, user_id: str, messaging_api: Messag
     raw_text = event.message.text.strip()
     text = raw_text.lower()
     if any(k in text for k in ["สวัสดี", "หวัดดี", "hello", "hi"]):
-        reply_text(messaging_api, event.reply_token, "สวัสดีครับ! พิมพ์ 'กิน [ชื่ออาหาร]' หรือ 'วิธีใช้' เพื่อเริ่มใช้งานได้เลยครับ")
+        reply_text(messaging_api, event.reply_token, "สวัสดีครับ พิมพ์ กิน ตามด้วยชื่ออาหาร หรือพิมพ์ วิธีใช้ เพื่อดูคำสั่ง")
         return
 
     if any(k in text for k in ["วิธีใช้", "วิธีใช้งาน", "คู่มือ", "สอน", "help"]):
@@ -317,7 +310,7 @@ def handle_postback_event(event: PostbackEvent, user_id: str, messaging_api: Mes
                 source_event_id=getattr(event, "webhook_event_id", None),
             )
         except (LookupError, PermissionError, ValueError):
-            reply_text(messaging_api, event.reply_token, "ไม่พบโปรแกรมนี้ หรือกรุณาตั้งค่าโปรไฟล์ให้ครบก่อนครับ")
+            reply_text(messaging_api, event.reply_token, "ไม่พบโปรแกรมนี้ กรุณาลองใหม่ครับ")
             return
         card = create_workout_logged_card(session.name, session.estimated_calories)
         reply_flex(messaging_api, event.reply_token, "บันทึกการออกกำลังกายสำเร็จ", card)
@@ -333,7 +326,7 @@ def handle_postback_event(event: PostbackEvent, user_id: str, messaging_api: Mes
                 source_event_id=getattr(event, "webhook_event_id", None),
             )
         except (LookupError, PermissionError, ValueError):
-            reply_text(messaging_api, event.reply_token, "ไม่พบรายการคาร์ดิโอนี้ หรือกรุณาตั้งค่าโปรไฟล์ให้ครบก่อนครับ")
+            reply_text(messaging_api, event.reply_token, "ไม่พบรายการคาร์ดิโอนี้ กรุณาลองใหม่ครับ")
             return
         card = create_workout_logged_card(session.name, session.estimated_calories)
         reply_flex(messaging_api, event.reply_token, "บันทึกคาร์ดิโอสำเร็จ", card)

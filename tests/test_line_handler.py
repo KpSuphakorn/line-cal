@@ -120,6 +120,11 @@ def test_greeting_command(mock_get_clients):
     assert "สวัสดีครับ" in call_args.messages[0].text
 
 
+def test_welcome_copy_uses_simple_food_command():
+    assert "กิน ตามด้วยชื่อเมนู" in WELCOME_FEATURES_TEXT
+    assert "เพื่อเข้าสู่ flow เดียวกับการถ่ายรูป" not in WELCOME_FEATURES_TEXT
+
+
 @patch("app.services.line_handler.reply_webapp")
 @patch("app.services.line_handler.require_completed_profile", return_value=True)
 @patch("app.services.line_handler.get_line_clients")

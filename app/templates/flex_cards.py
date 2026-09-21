@@ -137,13 +137,13 @@ def create_workout_logged_card(title: str, burned_kcal: float, remaining_kcal: f
 
 
 def create_welcome_guide_card(user_id: str = "") -> Dict[str, Any]:
-    rows = [{"type": "text", "text": "ส่งรูปอาหาร หรือพิมพ์ กิน <รายการอาหาร>", "size": "sm", "color": "#334155", "wrap": True}, {"type": "text", "text": "พิมพ์ สรุป เพื่อดูข้อมูลวันนี้", "size": "sm", "color": "#334155"}, {"type": "text", "text": "พิมพ์ ออกกำลังกาย หรือ โปรแกรม เพื่อเลือกโปรแกรมและคาร์ดิโอ", "size": "sm", "color": "#334155", "wrap": True}, {"type": "text", "text": "พิมพ์ ประวัติ เพื่อเปิดประวัติในเว็บ", "size": "sm", "color": "#334155"}]
+    rows = [{"type": "text", "text": "ส่งรูปอาหาร หรือพิมพ์ กิน ตามด้วยชื่อเมนู เช่น กิน ข้าวมันไก่พิเศษ", "size": "sm", "color": "#334155", "wrap": True}, {"type": "text", "text": "พิมพ์ สรุป เพื่อดูข้อมูลวันนี้", "size": "sm", "color": "#334155"}, {"type": "text", "text": "พิมพ์ ออกกำลังกาย หรือ โปรแกรม เพื่อเลือกโปรแกรมและรายการคาร์ดิโอ", "size": "sm", "color": "#334155", "wrap": True}, {"type": "text", "text": "พิมพ์ ประวัติ เพื่อดูสถิติย้อนหลัง", "size": "sm", "color": "#334155"}]
     footer = [_button("📊 วันนี้", {"type": "postback", "data": "action=view_dashboard"}), _button("🏋️ ออกกำลังกาย", {"type": "postback", "data": "action=view_workouts"}), _button("📖 ประวัติ", {"type": "postback", "data": "action=view_history"})]
     return _bubble("วิธีใช้ LINE Cal", rows, footer)
 
 
 def create_profile_onboarding_card(user_id: str = "") -> Dict[str, Any]:
-    return _bubble("ตั้งค่าโปรไฟล์ก่อนเริ่มใช้งาน", [{"type": "text", "text": "กรอกชื่อ อายุ เพศ ส่วนสูง น้ำหนัก เป้าหมาย และระดับกิจกรรม เพื่อคำนวณเป้าหมายส่วนตัว", "size": "sm", "color": "#334155", "wrap": True}], [_button("เปิดโปรไฟล์", {"type": "uri", "uri": webapp_uri("profile")}, "primary")], "#7C2D12")
+    return _bubble("กรอกโปรไฟล์ก่อนเริ่มใช้งาน", [{"type": "text", "text": "กรอกข้อมูลร่างกายและเป้าหมาย เพื่อคำนวณเป้าหมายอาหารและเริ่มบันทึกข้อมูล", "size": "sm", "color": "#334155", "wrap": True}], [_button("เปิดโปรไฟล์", {"type": "uri", "uri": webapp_uri("profile")}, "primary")], "#7C2D12")
 
 
 def create_profile_summary_card(profile: Dict[str, Any], user_id: str = "") -> Dict[str, Any]:

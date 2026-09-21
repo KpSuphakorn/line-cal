@@ -148,6 +148,11 @@ def test_webapp_dashboard_endpoint():
     assert "aria-pressed" in response.text
     assert "aria-current" in response.text
     assert "profile?.profile_completed" in response.text
+    assert "const PROFILE_REQUIRED_MESSAGE='กรุณาตั้งค่าโปรไฟล์ให้ครบก่อนเริ่มใช้งาน'" in response.text
+    assert "if(!profileRequired())return" in response.text
+    assert "async function loadCapture(captureToken){if(!profileRequired())return;" in response.text
+    assert "sessionResponse.status===409" in response.text
+    assert "presetResponse.status===409" in response.text
     for emoji in ("📊", "📅", "🏋", "👤", "🍽", "🏃"):
         assert emoji not in response.text
     assert "class=\"tab-nav\"" not in response.text
