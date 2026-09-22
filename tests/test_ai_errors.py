@@ -132,6 +132,8 @@ def test_a_stalled_model_is_tried_again_rather_than_benched(fake_clock, monkeypa
 @pytest.mark.parametrize("message,kind", [
     (OVERLOADED, "unavailable"),
     ("429 Resource has been exhausted (quota)", "quota"),
+    ("429 quota_id: GenerateRequestsPerDayPerProjectPerModel-FreeTier", "quota_day"),
+    ("429 quota_id: GenerateRequestsPerMinutePerProjectPerModel-FreeTier", "quota_minute"),
     ("404 models/foo is not found for API version v1beta", "missing"),
 ])
 def test_an_explicit_refusal_benches_the_model(fake_clock, monkeypatch, message, kind):

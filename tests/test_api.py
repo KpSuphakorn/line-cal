@@ -690,3 +690,21 @@ def test_webhook_acknowledges_before_running_slow_handlers(monkeypatch):
 
     asyncio.run(background_tasks())
     assert calls == [[]]
+
+
+def test_readiness_check_actually_touches_the_database():
+    """An uptime ping has to prove Postgres is reachable, or it keeps neither
+    the app nor Supabase's free-plan project alive."""
+    response = client.get("/ready")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ready", "database": "reachable"}
+
+
+def test_readiness_check_reports_503_when_the_database_is_gone(monkeypatch):
+    from sqlalchemy.orm import Session as _Session
+
+    def _broken_execute(self, *args, **kwargs):
+        raise RuntimeError("connection refused")
+
+    monkeypatch.setattr(_Session, "execute", _broken_execute)
+    assert client.get("/ready").status_code == 503

@@ -13,20 +13,33 @@ logger = logging.getLogger(__name__)
 # calls to it 404'd as "no longer available to new users".
 #
 # Free-tier availability moves without warning, so this is a chain and not a
-# single model. Measured on this account with the real food prompt on
-# 2026-09-23, after 3.5-flash-lite (previously ~0.9s) degraded to 15s+ hangs:
+# single model. The free-tier allowance is per model per day, so every extra
+# entry here is extra daily capacity, not just extra redundancy. Models are
+# tried in order and only on failure, so a healthy first entry still costs
+# exactly one request.
 #
-#   gemini-3.6-flash        5.5s / 7.7s   ok, but capped at 20 requests/day
-#   gemini-3.1-flash-lite   6.6s / 12.5s  ok, slower and more variable
-#   gemini-3.5-flash-lite   timed out twice at 15s — kept last so it serves
-#                           again by itself once Google's side recovers
+# Every name below was verified on 2026-09-23 with a real generate_content
+# call on both the text and the vision prompt — genai.list_models() lists names
+# this account cannot actually call (it still advertises gemini-2.5-flash-lite,
+# which 404s). Text / vision latency as measured that day:
 #
-# Models are tried in order and only on failure, so a healthy first entry costs
-# exactly one request — a chain does not spend more quota than a single model.
+#   gemini-3.5-flash-lite             1.0s / 1.7s   (had stalled at 15s+ earlier
+#                                                    the same day, then recovered)
+#   gemini-3-flash-preview            4.5s / 9.2s
+#   gemini-3.1-flash-lite             8.3s / 7.9s
+#   gemini-3.1-flash-lite-preview     7.3s / 9.3s
+#
+# The non-lite flash family (3.5, 3.6, 3.7, 3.8) was returning 503 "experiencing
+# high demand" across the board at the time, but each carries its own daily
+# allowance and answers in ~5s when healthy, so they stay in as later entries:
+# the cooldown below means a 503 costs one probe per minute, not one per request.
 FOOD_MODELS = (
-    "gemini-3.6-flash",
-    "gemini-3.1-flash-lite",
     "gemini-3.5-flash-lite",
+    "gemini-3-flash-preview",
+    "gemini-3.1-flash-lite",
+    "gemini-3.6-flash",
+    "gemini-3.8-flash",
+    "gemini-3.1-flash-lite-preview",
 )
 
 # A 429 from a quota-exhausted model carries a "retry in 22s" hint that
@@ -64,9 +77,11 @@ MAX_ROUNDS = 3
 # ordinary behaviour, so treating a slow call as "this model is broken" would
 # bench the only healthy model we have.
 _COOLDOWN_SECONDS = {
-    "missing": 86_400.0,   # 404 — not served to this account, not coming back today
-    "quota": 900.0,        # 429 — the free-tier allowance is spent
-    "unavailable": 60.0,   # 503 — Google calls these spikes temporary
+    "missing": 86_400.0,      # 404 — not served to this account, not coming back today
+    "quota_day": 21_600.0,    # 429 on the daily allowance — nothing frees up for hours
+    "quota_minute": 60.0,     # 429 on the per-minute rate — frees up almost at once
+    "quota": 900.0,           # 429, unclear which — split the difference
+    "unavailable": 60.0,      # 503 — Google calls these spikes temporary
 }
 
 # Module-level so a refusal is remembered across requests: re-probing a model
@@ -95,6 +110,14 @@ def _refusal_kind(error: Exception) -> str | None:
     if "404" in text or "not found" in text:
         return "missing"
     if "429" in text or "quota" in text or "resource_exhausted" in text:
+        # A 429 names the allowance it broke, e.g.
+        # "GenerateRequestsPerDayPerProjectPerModel-FreeTier". Waiting out a
+        # per-minute limit takes a minute; a daily one will not free up today,
+        # and re-probing it every 15 minutes just burns the time budget.
+        if "perday" in text or "per day" in text:
+            return "quota_day"
+        if "perminute" in text or "per minute" in text:
+            return "quota_minute"
         return "quota"
     if "503" in text or "unavailable" in text or "high demand" in text:
         return "unavailable"

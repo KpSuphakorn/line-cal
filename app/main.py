@@ -8,6 +8,7 @@ from fastapi.responses import PlainTextResponse, HTMLResponse
 from pydantic import BaseModel, Field, field_validator
 from linebot.v3 import WebhookParser
 from linebot.v3.exceptions import InvalidSignatureError
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -93,6 +94,23 @@ def root():
 @app.get("/health")
 def health_check():
     return {"status": "healthy"}
+
+
+@app.get("/ready")
+def readiness_check(db: Session = Depends(get_db)):
+    """Health check that actually reaches the database.
+
+    /health answers from the process alone, so an uptime ping against it proves
+    nothing about Postgres and — on Supabase's free plan, which pauses a project
+    after about a week with no database activity — does not count as activity
+    either. Point the keep-alive ping here instead.
+    """
+    try:
+        db.execute(text("SELECT 1"))
+    except Exception:
+        logger.exception("Readiness check could not reach the database")
+        raise HTTPException(status_code=503, detail="Database unavailable")
+    return {"status": "ready", "database": "reachable"}
 
 
 def _process_webhook_events(events: list) -> None:

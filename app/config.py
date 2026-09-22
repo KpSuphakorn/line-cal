@@ -63,7 +63,12 @@ class Settings(BaseSettings):
     DB_MAX_OVERFLOW: int = Field(default=2, ge=0, le=20)
     MAX_UPLOAD_BYTES: int = Field(default=10 * 1024 * 1024, ge=1, le=50 * 1024 * 1024)
     ALLOWED_IMAGE_TYPES: str = Field(default="image/jpeg,image/png,image/webp")
-    AI_DAILY_LIMIT: int = Field(default=30, ge=1, le=10000)
+    # Per user per Bangkok day. This guards one person from draining the shared
+    # Gemini allowance, which is billed per model per day across the whole
+    # project rather than per user — the model chain in ai_errors is what
+    # actually supplies capacity. Override with AI_DAILY_LIMIT in the
+    # environment; no redeploy needed.
+    AI_DAILY_LIMIT: int = Field(default=60, ge=1, le=10000)
     STRENGTH_MET: float = Field(default=3.5, ge=1.0, le=12.0)
 
     model_config = SettingsConfigDict(
