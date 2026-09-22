@@ -1,0 +1,11 @@
+{
+  "name": "line-cal-webapp-tests",
+  "private": true,
+  "description": "Browser-side tests for the LIFF Web App rendered by app/templates/dashboard.html",
+  "scripts": {
+    "test": "node --test tests/js/"
+  },
+  "devDependencies": {
+    "jsdom": "^30.1.1"
+  }
+}

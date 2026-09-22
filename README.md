@@ -63,7 +63,7 @@ flowchart TD
 - **12-Factor App & Security**: แยกการตั้งค่าความลับทั้งหมดออกจากโค้ดผ่าน Pydantic V2 Settings และ `.env` โดยเด็ดขาด
 - **Cloud Database Ready**: รองรับ **Supabase (PostgreSQL)** พร้อม Connection Pooling (`pool_size`, `max_overflow`, `pool_pre_ping`) และ fallback SQLite สำหรับ Local Development
 - **Robust Multimodal AI Pipeline**: สกัดผลลัพธ์จาก Gemini Vision ออกมาเป็น Strict JSON Schema พร้อม Error Handling และ Fallback Mock สำหรับ Local Offline Testing
-- **Automated tests**: มีชุดทดสอบสูตรคำนวณ, Flex Message และ REST API; รันด้วย `pytest -v` ใน CI
+- **Automated tests**: ชุดทดสอบสูตรคำนวณ, Flex Message และ REST API รันด้วย `pytest`; ชุดทดสอบฝั่ง LIFF Web App รันด้วย `npm test` (jsdom) — ทั้งสองชุดรันใน CI ทุก push
 - **Containerized**: มาพร้อม `Dockerfile` (Multi-stage build) และ `docker-compose.yml` พร้อม Deploy ได้ทุก Cloud Provider (Render, Railway, Fly.io, AWS, VPS)
 
 ---
@@ -140,8 +140,12 @@ docker-compose up --build
 
 ### 5. Running Tests
 ```bash
-pytest -v
+pytest -v          # Backend: services, REST API, Flex cards, migrations
+
+npm install        # once
+npm test           # Web App: LIFF dashboard behaviour, run in jsdom
 ```
+ชุดทดสอบฝั่ง Web App โหลด `app/templates/dashboard.html` ตัวจริงเข้า jsdom แล้วเรียกฟังก์ชันของหน้าเว็บโดยตรง จึงไม่มีสำเนาโค้ดที่หลุดจากของจริงได้
 
 ---
 
@@ -167,6 +171,7 @@ line-cal/
 │   ├── config.py              # Pydantic Settings
 │   └── main.py                # FastAPI entrypoint & simulation endpoints
 ├── tests/
+│   ├── js/                    # Web App tests: dashboard.html loaded in jsdom
 │   ├── test_api.py            # API endpoint integration tests
 │   ├── test_fitness.py        # Exercise & nutrition calculations unit tests
 │   └── test_flex_cards.py     # LINE Flex Container schema verification

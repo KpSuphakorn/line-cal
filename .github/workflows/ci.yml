@@ -25,9 +25,21 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt
 
+    - name: Set up Node.js 22
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+        cache: 'npm'
+
+    - name: Install Web App test dependencies
+      run: npm ci
+
     - name: Run Pytest Test Suite
       run: |
         pytest -v
+
+    - name: Run Web App Test Suite
+      run: npm test
 
     - name: Verify Alembic migrations
       run: |
