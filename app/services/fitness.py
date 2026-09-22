@@ -2,6 +2,7 @@
 from datetime import datetime, date, time, timezone, timedelta
 from zoneinfo import ZoneInfo
 from typing import Dict, Any, List, Optional, Iterable
+from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from app.db.models import (
@@ -373,11 +374,12 @@ def get_history_summary(
         daily_data.values(),
         key=lambda item: (item["calories_in"], item["date"]),
     ) if daily_data else None
+    # Only the extremes matter, so let the database find them rather than
+    # pulling every timestamp the user has ever logged across the wire.
     years = {datetime.now(BANGKOK).year, anchor.year}
-    for value in db.query(FoodLog.logged_at).filter(FoodLog.user_id == user_id).all():
-        years.add(as_bangkok(value[0]).year)
-    for value in db.query(WorkoutSession.occurred_at).filter(WorkoutSession.user_id == user_id).all():
-        years.add(as_bangkok(value[0]).year)
+    for column, owner in ((FoodLog.logged_at, FoodLog.user_id), (WorkoutSession.occurred_at, WorkoutSession.user_id)):
+        bounds = db.query(func.min(column), func.max(column)).filter(owner == user_id).one()
+        years.update(as_bangkok(value).year for value in bounds if value is not None)
     oldest_year = min(years)
     newest_year = max(years)
     return {

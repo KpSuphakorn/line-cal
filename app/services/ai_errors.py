@@ -98,6 +98,14 @@ class FoodAnalysisError(RuntimeError):
     """
 
 
+class ImageTooLargeError(FoodAnalysisError):
+    """Raised when a photo is rejected before it is decoded.
+
+    A subclass so every existing `except FoodAnalysisError` still handles it;
+    callers that can say something more specific catch it on its own.
+    """
+
+
 def _refusal_kind(error: Exception) -> str | None:
     """Classify an error as a refusal worth benching the model for, or None.
 

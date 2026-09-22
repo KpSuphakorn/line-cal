@@ -1,4 +1,7 @@
-.env
+# Keep every local secrets file out of the image; the checked-in template is
+# the one exception, and it holds placeholders only.
+.env*
+!.env.example
 .venv
 __pycache__
 *.py[cod]
@@ -6,4 +9,5 @@ __pycache__
 .pytest_cache
 .git
 tests
+node_modules
 agent-runs

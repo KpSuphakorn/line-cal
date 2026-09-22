@@ -1,11 +1,11 @@
 import logging
 from pathlib import Path
-from typing import Optional
-from datetime import datetime, date
+from typing import Annotated, Optional
+from datetime import datetime, date, timezone
 from contextlib import asynccontextmanager
 from fastapi import BackgroundTasks, FastAPI, Request, Header, HTTPException, Depends, UploadFile, File, Query
 from fastapi.responses import PlainTextResponse, HTMLResponse
-from pydantic import BaseModel, Field, field_validator
+from pydantic import AfterValidator, BaseModel, Field, field_validator
 from linebot.v3 import WebhookParser
 from linebot.v3.exceptions import InvalidSignatureError
 from sqlalchemy import text
@@ -20,7 +20,7 @@ from app.services.fitness import (
     get_user_profile, update_user_profile, is_user_profile_customized, delete_user_account
 )
 from app.services.ai_vision import analyze_food_image
-from app.services.ai_errors import FoodAnalysisError
+from app.services.ai_errors import FoodAnalysisError, ImageTooLargeError
 from app.services.food_capture import (
     MAX_CALORIES,
     MAX_MACRO_GRAMS,
@@ -179,6 +179,8 @@ async def simulate_analyze_food(
         raise HTTPException(status_code=413, detail="Image is too large")
     try:
         food_data = analyze_food_image(contents)
+    except ImageTooLargeError as exc:
+        raise HTTPException(status_code=413, detail="Image is too large") from exc
     except FoodAnalysisError as exc:
         raise HTTPException(status_code=502, detail="ไม่สามารถวิเคราะห์รายการอาหารได้ กรุณาลองใหม่อีกครั้ง") from exc
     flex_preview = create_food_analyzed_card(food_data, "test_id_123")
@@ -238,14 +240,16 @@ class FoodDraftPayload(BaseModel):
 
 
 class UserProfilePayload(BaseModel):
-    name: Optional[str] = None
-    birth_date: Optional[str] = None
-    gender: Optional[str] = None
+    # Every bound below matches its column width. Without them an over-long
+    # value reaches Postgres and fails there as a 500 instead of a 422.
+    name: Optional[str] = Field(default=None, max_length=100)
+    birth_date: Optional[str] = Field(default=None, max_length=32)
+    gender: Optional[str] = Field(default=None, max_length=10)
     age: Optional[int] = Field(default=None, ge=13, le=120)
     height_cm: Optional[float] = Field(default=None, ge=80, le=250)
     weight_kg: Optional[float] = Field(default=None, ge=20, le=400)
-    goal: Optional[str] = None
-    activity_level: Optional[str] = None
+    goal: Optional[str] = Field(default=None, max_length=50)
+    activity_level: Optional[str] = Field(default=None, max_length=30)
     activity_multiplier: Optional[float] = Field(default=None, ge=1.0, le=3.0)
     daily_target_kcal: Optional[float] = Field(default=None, ge=500, le=10000)
     target_protein_g: Optional[float] = Field(default=None, ge=0, le=1000)
@@ -341,6 +345,22 @@ def api_me_delete_workout_program(program_id: int, db: Session = Depends(get_db)
     return {"status": "deleted"}
 
 
+def _as_utc(value: datetime) -> datetime:
+    """Reject a timestamp that does not say which zone it is in.
+
+    Event times are stored as UTC and read back as Bangkok days, so a naive
+    value would be taken as UTC and land a 19:00 Bangkok workout on the
+    previous day. Requiring the offset makes the caller state its intent, and
+    converting here keeps UTC the single boundary.
+    """
+    if value.utcoffset() is None:
+        raise ValueError("timestamp must include a UTC offset, e.g. 2026-09-23T19:30:00+07:00")
+    return value.astimezone(timezone.utc)
+
+
+UtcTimestamp = Annotated[datetime, AfterValidator(_as_utc)]
+
+
 class SessionExercisePayload(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     sets: int = Field(default=0, ge=0, le=100)
@@ -352,7 +372,7 @@ class SessionExercisePayload(BaseModel):
 class WorkoutSessionPayload(BaseModel):
     program_id: int = Field(gt=0)
     source_event_id: Optional[str] = Field(default=None, max_length=128)
-    occurred_at: Optional[datetime] = None
+    occurred_at: Optional[UtcTimestamp] = None
 
 
 class CardioPresetPayload(BaseModel):
@@ -368,7 +388,7 @@ class CardioPresetPayload(BaseModel):
 class CardioPayload(BaseModel):
     preset_id: int = Field(gt=0)
     source_event_id: Optional[str] = Field(default=None, max_length=128)
-    occurred_at: Optional[datetime] = None
+    occurred_at: Optional[UtcTimestamp] = None
 
 
 class CardioSessionUpdatePayload(BaseModel):
@@ -417,7 +437,7 @@ def api_me_delete_cardio_preset(preset_id: int, db: Session = Depends(get_db), c
 class WorkoutSessionUpdatePayload(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=150)
     notes: Optional[str] = Field(default=None, max_length=5000)
-    occurred_at: Optional[datetime] = None
+    occurred_at: Optional[UtcTimestamp] = None
     estimated_duration_min: Optional[float] = Field(default=None, ge=0, le=1440)
     estimated_calories: Optional[float] = Field(default=None, ge=0, le=100000)
     exercises: Optional[list[SessionExercisePayload]] = Field(default=None, max_length=100)

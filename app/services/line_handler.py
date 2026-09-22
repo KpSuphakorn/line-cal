@@ -35,6 +35,7 @@ from app.services.fitness import (
     is_user_profile_customized,
 )
 from app.services.workouts import create_cardio_session, create_strength_session, list_cardio_presets, list_programs
+from app.services.ai_errors import ImageTooLargeError
 from app.services.ai_vision import analyze_food_image
 from app.services.ai_chat import parse_food_text, strip_food_command
 from app.services import food_cache
@@ -156,22 +157,28 @@ def _capture_food(
     but a typed lunch usually is, and reusing that estimate costs no request
     from the shared daily Gemini allowance.
     """
-    if ai_quota_remaining(db, user_id) <= 0:
-        reply_text(messaging_api, reply_token, "⏳ วันนี้ใช้โควต้าวิเคราะห์อาหารครบแล้ว ลองใหม่พรุ่งนี้ได้เลยครับ")
-        return
     try:
+        # The cache is consulted before the allowance is checked on purpose: a
+        # dish already in the cache spends nothing, so it stays available even
+        # to a user who has used up their day.
         items = food_cache.lookup(db, cache_text) if cache_text else None
-        if items is None:
+        used_ai = items is None
+        if used_ai:
+            if ai_quota_remaining(db, user_id) <= 0:
+                reply_text(messaging_api, reply_token, "⏳ วันนี้ใช้โควต้าวิเคราะห์อาหารครบแล้ว ลองใหม่พรุ่งนี้ได้เลยครับ")
+                return
             result = analyzer()
             items = result.get("items", [result])
             if cache_text:
                 food_cache.store(db, cache_text, items)
-        capture = create_capture(db, user_id, source, items, source_message_id=source_message_id)
+        capture = create_capture(db, user_id, source, items, source_message_id=source_message_id, used_ai=used_ai)
         if not capture.drafts:
             reply_text(messaging_api, reply_token, "🤔 ยังไม่พบรายการอาหารที่วิเคราะห์ได้ ลองพิมพ์รายละเอียดเองอีกครั้งครับ")
             return
         card = create_food_analyzed_card({"items": serialize_capture(capture)["items"]}, capture.token, user_id=user_id)
         reply_flex(messaging_api, reply_token, "ตรวจสอบรายการอาหารก่อนยืนยัน", card)
+    except ImageTooLargeError:
+        reply_text(messaging_api, reply_token, "🖼️ รูปนี้ใหญ่เกินไปครับ ลองถ่ายใหม่หรือย่อขนาดก่อนส่งอีกครั้ง")
     except Exception as exc:
         logger.error("Failed to create food capture: %s", exc, exc_info=True)
         reply_text(messaging_api, reply_token, "⚠️ ขออภัยครับ ไม่สามารถวิเคราะห์รายการอาหารได้ กรุณาลองใหม่อีกครั้ง")

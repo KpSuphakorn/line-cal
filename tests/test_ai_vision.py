@@ -8,7 +8,8 @@ from PIL import Image
 
 from app.config import settings
 from app.services import ai_errors
-from app.services.ai_errors import FoodAnalysisError
+from app.services.ai_errors import FoodAnalysisError, ImageTooLargeError
+from app.services import ai_vision
 from app.services.ai_vision import analyze_food_image
 
 
@@ -119,3 +120,38 @@ def test_missing_plate_numbers_do_not_get_merged_together(monkeypatch):
     res = analyze_food_image(_tiny_png_bytes())
 
     assert [item["food_name"] for item in res["items"]] == ["ข้าวผัด", "น้ำเปล่า"]
+
+
+def test_an_oversized_upload_is_rejected_before_it_is_decoded(monkeypatch):
+    """The byte guard runs ahead of mock mode and of Pillow, so no worker ever
+    decodes a blob larger than the app accepts."""
+    monkeypatch.setattr(settings, "MAX_UPLOAD_BYTES", 1024)
+
+    with pytest.raises(ImageTooLargeError):
+        analyze_food_image(b"x" * 2048)
+
+
+def test_a_high_pixel_image_is_rejected_before_it_is_decoded(monkeypatch):
+    """Bytes alone do not bound memory: a small compressed file can still open
+    to tens of megapixels, which is ~4 bytes of RAM each once decoded."""
+    monkeypatch.setattr(settings, "GEMINI_API_KEY", "genuine-real-api-key")
+    monkeypatch.setattr(ai_vision, "MAX_IMAGE_PIXELS", 16)
+    genai = _genai_returning([{"food_name": "ข้าว", "calories": 100}])
+    monkeypatch.setitem(sys.modules, "google.generativeai", genai)
+
+    buffer = io.BytesIO()
+    Image.new("RGB", (10, 10), color="white").save(buffer, format="PNG")
+
+    with pytest.raises(ImageTooLargeError):
+        analyze_food_image(buffer.getvalue())
+
+
+def test_an_image_within_both_limits_is_still_analyzed(monkeypatch):
+    """The guards must not reject an ordinary phone photo."""
+    monkeypatch.setattr(settings, "GEMINI_API_KEY", "genuine-real-api-key")
+    genai = _genai_returning([{"food_name": "ข้าว", "calories": 100}])
+    monkeypatch.setitem(sys.modules, "google.generativeai", genai)
+
+    res = analyze_food_image(_tiny_png_bytes())
+
+    assert res["items"][0]["food_name"] == "ข้าว"

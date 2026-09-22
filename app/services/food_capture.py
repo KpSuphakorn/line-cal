@@ -20,6 +20,11 @@ CAPTURE_TTL = timedelta(hours=24)
 MAX_CALORIES = 100000.0
 MAX_MACRO_GRAMS = 10000.0
 
+# A capture is one photo or one typed line, so a handful of plates is the
+# realistic ceiling. Bounding it here stops a malformed AI response from
+# turning into hundreds of draft rows and an unreadable review card.
+MAX_DRAFT_ITEMS = 20
+
 
 @dataclass(frozen=True)
 class CaptureActionResult:
@@ -54,21 +59,41 @@ def normalize_food_result(result: dict[str, Any] | None) -> list[dict[str, Any]]
         items.append({
             "food_name": name[:200],
             "portion": str(raw.get("portion") or "1 ที่")[:150],
-            "calories": min(MAX_CALORIES, max(0.0, float(raw.get("calories") or 0))),
-            "protein": min(MAX_MACRO_GRAMS, max(0.0, float(raw.get("protein") or 0))),
-            "carbs": min(MAX_MACRO_GRAMS, max(0.0, float(raw.get("carbs") or 0))),
-            "fat": min(MAX_MACRO_GRAMS, max(0.0, float(raw.get("fat") or 0))),
+            "calories": _bounded_float(raw.get("calories"), MAX_CALORIES),
+            "protein": _bounded_float(raw.get("protein"), MAX_MACRO_GRAMS),
+            "carbs": _bounded_float(raw.get("carbs"), MAX_MACRO_GRAMS),
+            "fat": _bounded_float(raw.get("fat"), MAX_MACRO_GRAMS),
             "confidence": _optional_float(raw.get("confidence")),
             "notes": str(raw.get("notes") or "").strip()[:1000] or None,
         })
+        if len(items) == MAX_DRAFT_ITEMS:
+            break
     return items
+
+
+def _bounded_float(value: Any, ceiling: float) -> float:
+    """Coerce one AI number into [0, ceiling], treating anything unusable as 0.
+
+    The model occasionally answers with a string, a null or a NaN. None of
+    those should abort a whole capture, so they become 0 and stay editable.
+    """
+    try:
+        number = float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+    if number != number:  # NaN, which every comparison below would silently pass
+        return 0.0
+    return min(ceiling, max(0.0, number))
 
 
 def _optional_float(value: Any) -> float | None:
     try:
-        return None if value in (None, "") else max(0.0, min(1.0, float(value)))
+        number = float(value) if value not in (None, "") else None
     except (TypeError, ValueError):
         return None
+    if number is None or number != number:
+        return None
+    return max(0.0, min(1.0, number))
 
 
 def create_capture(
@@ -78,8 +103,14 @@ def create_capture(
     items: Iterable[dict[str, Any]],
     source_message_id: str | None = None,
     ai_metadata: dict[str, Any] | None = None,
+    used_ai: bool = True,
 ) -> FoodCapture:
-    """Persist one capture and its ordered independent draft items."""
+    """Persist one capture and its ordered independent draft items.
+
+    `used_ai` is False when the items came from the food estimate cache. The
+    daily allowance exists to stop one user draining the shared Gemini pool,
+    and a cached dish never reaches Gemini, so it must not count.
+    """
     if source_message_id:
         existing = db.query(FoodCapture).filter(
             FoodCapture.user_id == user_id,
@@ -93,6 +124,7 @@ def create_capture(
         source=source,
         source_message_id=source_message_id,
         status="draft",
+        used_ai=used_ai,
         ai_metadata=ai_metadata or {},
         expires_at=datetime.now(timezone.utc) + CAPTURE_TTL,
     )
@@ -244,6 +276,7 @@ def ai_quota_remaining(db: Session, user_id: str) -> int:
     end = start + timedelta(days=1)
     used = db.query(FoodCapture).filter(
         FoodCapture.user_id == user_id,
+        FoodCapture.used_ai.is_(True),
         FoodCapture.created_at >= start,
         FoodCapture.created_at < end,
     ).count()

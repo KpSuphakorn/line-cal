@@ -1,12 +1,14 @@
 """Unit tests for the food estimate cache and the fail-soft guarantee around it."""
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from app.db.models import Base, FoodEstimateCache
+from app.db.models import Base, FoodCapture, FoodEstimateCache, User
 from app.services import food_cache
 from app.services.ai_chat import strip_food_command
+from app.services.food_capture import ai_quota_remaining
 
 
 def get_test_db():
@@ -83,6 +85,30 @@ def test_the_cache_key_drops_the_command_word():
     assert strip_food_command("ข้าวมันไก่") == "ข้าวมันไก่"
 
 
+def test_an_estimate_past_its_ttl_is_re_asked_rather_than_served():
+    """A stored opinion goes stale — both the model and the recipe drift."""
+    db = get_test_db()
+    food_cache.store(db, "ข้าวมันไก่", ITEMS)
+    row = db.query(FoodEstimateCache).one()
+    row.created_at = datetime.now(timezone.utc) - food_cache.CACHE_TTL - timedelta(days=1)
+    db.commit()
+
+    assert food_cache.lookup(db, "ข้าวมันไก่") is None
+
+
+def test_re_storing_a_stale_entry_restarts_its_clock():
+    """Otherwise a key that once went stale could never be served again."""
+    db = get_test_db()
+    food_cache.store(db, "ข้าวมันไก่", ITEMS)
+    row = db.query(FoodEstimateCache).one()
+    row.created_at = datetime.now(timezone.utc) - food_cache.CACHE_TTL - timedelta(days=1)
+    db.commit()
+
+    food_cache.store(db, "ข้าวมันไก่", ITEMS)
+
+    assert food_cache.lookup(db, "ข้าวมันไก่") == ITEMS
+
+
 @patch("app.services.line_handler.reply_flex")
 @patch("app.services.line_handler.ai_quota_remaining", return_value=10)
 def test_a_cached_dish_never_calls_the_model_again(_quota, _reply):
@@ -113,3 +139,43 @@ def test_a_photo_is_never_served_from_cache(_quota, _reply):
 
     assert analyzer.call_count == 2
     assert db.query(FoodEstimateCache).count() == 0
+
+
+@patch("app.services.line_handler.reply_flex")
+def test_a_cache_hit_does_not_spend_the_daily_allowance(_reply):
+    """The allowance exists to protect the shared Gemini pool, and a cached
+    dish never reaches Gemini, so it must not count against the user's day."""
+    from app.services.line_handler import _capture_food
+
+    db = get_test_db()
+    db.add(User(id="u1"))
+    db.commit()
+    analyzer = MagicMock(return_value={"items": ITEMS})
+
+    _capture_food(db, "u1", "text", None, analyzer, MagicMock(), "tok", cache_text="ข้าวมันไก่")
+    after_first = ai_quota_remaining(db, "u1")
+    _capture_food(db, "u1", "text", None, analyzer, MagicMock(), "tok", cache_text="ข้าวมันไก่")
+
+    assert analyzer.call_count == 1
+    assert ai_quota_remaining(db, "u1") == after_first, "the cached repeat cost nothing"
+    assert db.query(FoodCapture).count() == 2, "but it is still a real capture the user can edit"
+
+
+@patch("app.services.line_handler.reply_text")
+@patch("app.services.line_handler.reply_flex")
+@patch("app.services.line_handler.ai_quota_remaining", return_value=0)
+def test_a_cached_dish_still_works_after_the_allowance_runs_out(_quota, _reply_flex, reply_text):
+    """The allowance is checked only on the path that actually calls Gemini."""
+    from app.services.line_handler import _capture_food
+
+    db = get_test_db()
+    db.add(User(id="u1"))
+    db.commit()
+    food_cache.store(db, "ข้าวมันไก่", ITEMS)
+    analyzer = MagicMock(return_value={"items": ITEMS})
+
+    _capture_food(db, "u1", "text", None, analyzer, MagicMock(), "tok", cache_text="ข้าวมันไก่")
+
+    assert analyzer.call_count == 0
+    assert reply_text.call_count == 0, "the user was not told they were out of quota"
+    assert db.query(FoodCapture).count() == 1

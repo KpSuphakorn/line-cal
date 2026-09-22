@@ -33,8 +33,18 @@ _Avoid_: Quick log
 A stored AI estimate for one exact food description, keyed on the normalized
 text and owned by nobody — it records what the model says a dish contains, not
 what a person ate. A repeated typed dish is served from it instead of spending
-a request from the per-model daily Gemini allowance. Photos are never cached.
+a request from the per-model daily Gemini allowance, and a cached dish does not
+count against the user's daily allowance either. Entries expire after 30 days
+because both the model and a recipe drift. Photos are never cached, and the key
+is whatever the user typed, so the trade-off accepted here is that one person's
+wording is reused for another's identical dish.
 _Avoid_: Food history, saved meal
+
+**Daily AI allowance**:
+The per-user cap on food analyses that actually reach Gemini in one Bangkok
+day. It counts captures whose `used_ai` is true, so a cache hit stays free and
+remains available after the cap is reached.
+_Avoid_: Quota, rate limit
 
 **Workout program**:
 A user-created, reusable collection of exercises. It is not tied to a weekday;
@@ -83,3 +93,14 @@ Production startup does not run schema creation or migrations. Before releasing
 features that add tables, run `alembic upgrade head` against the Railway
 `MIGRATION_DATABASE_URL` (or the equivalent Supabase connection URL), verify the
 new revision in `alembic_version`, then deploy the application image.
+
+`alembic check` runs in CI and in the test suite, so models and migrations may
+not disagree. Where they already did, the model was corrected to describe the
+database rather than the database widened — see the comments on `users.gender`
+and `workout_sessions.program_id`.
+
+## API timestamps
+
+Every timestamp an API accepts must carry a UTC offset; a naive value is
+rejected with 422 rather than guessed at. Values are converted to UTC at the
+request boundary, stored as UTC, and rendered as Bangkok days on the way out.

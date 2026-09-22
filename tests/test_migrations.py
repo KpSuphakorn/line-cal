@@ -5,11 +5,23 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine
 from app.db.models import FoodAnalysisDraft, FoodLog, User
 from app.db.models import CardioPreset
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def alembic_head() -> str:
+    """Ask Alembic for the head rather than pinning the number here.
+
+    These assertions are about migrations reaching the end of the chain, not
+    about which revision is last, so a hard-coded id only fails the suite every
+    time a migration is added.
+    """
+    return ScriptDirectory.from_config(Config(str(ROOT / "alembic.ini"))).get_current_head()
 
 
 def test_orm_matches_ownership_and_food_nutrition_contract():
@@ -44,7 +56,7 @@ def test_fresh_sqlite_migrations_reach_head(tmp_path):
 
     with sqlite3.connect(database_path) as connection:
         revision = connection.execute("SELECT version_num FROM alembic_version").fetchone()[0]
-        assert revision == "0008_food_estimate_cache"
+        assert revision == alembic_head()
 
         food_columns = {
             row[1]: row[3]
@@ -68,6 +80,11 @@ def test_fresh_sqlite_migrations_reach_head(tmp_path):
             for row in connection.execute("PRAGMA index_list(food_estimate_cache)")
         }
         assert any(unique for unique in cache_indexes.values()), "cache_key must be unique"
+
+        # The daily allowance is counted from this column, so a capture served
+        # from the cache can be excluded from it.
+        capture_columns = {row[1]: row[3] for row in connection.execute("PRAGMA table_info(food_captures)")}
+        assert capture_columns["used_ai"] == 1, "used_ai must be NOT NULL"
 
         tables = {
             row[0]
@@ -161,7 +178,7 @@ def test_existing_cardio_presets_table_is_adopted_by_0006(tmp_path):
     )
     with sqlite3.connect(database_path) as connection:
         revision = connection.execute("SELECT version_num FROM alembic_version").fetchone()[0]
-        assert revision == "0008_food_estimate_cache"
+        assert revision == alembic_head()
 
 
 def test_malformed_existing_cardio_presets_table_fails_adoption(tmp_path):
@@ -276,3 +293,23 @@ def test_adopted_cardio_presets_downgrade_is_non_destructive(tmp_path):
     assert connection.execute(
             "SELECT name FROM cardio_presets WHERE user_id='downgrade-user'"
         ).fetchone()[0] == "เดินชัน"
+
+
+def test_models_match_the_migrations(tmp_path):
+    """Drift between models and migrations is how a deploy gets rejected at
+    Railway's pre-deploy step, where it costs an outage instead of a red run."""
+    database_path = tmp_path / "drift-check.db"
+    env = os.environ.copy()
+    env["DATABASE_URL"] = f"sqlite:///{database_path}"
+    env.pop("MIGRATION_DATABASE_URL", None)
+
+    subprocess.run(
+        [sys.executable, "-m", "alembic", "upgrade", "head"],
+        cwd=ROOT, env=env, check=True, capture_output=True, text=True,
+    )
+    check = subprocess.run(
+        [sys.executable, "-m", "alembic", "check"],
+        cwd=ROOT, env=env, capture_output=True, text=True,
+    )
+
+    assert check.returncode == 0, f"models and migrations disagree:\n{check.stderr}"

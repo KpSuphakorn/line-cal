@@ -45,3 +45,9 @@ jobs:
       run: |
         rm -f /tmp/line-cal-ci.db
         DATABASE_URL=sqlite:////tmp/line-cal-ci.db alembic upgrade head
+
+    # A migration that never ran against the models is how a deploy gets
+    # rejected at Railway's pre-deploy step. This fails the build instead.
+    - name: Verify models match migrations
+      run: |
+        DATABASE_URL=sqlite:////tmp/line-cal-ci.db alembic check

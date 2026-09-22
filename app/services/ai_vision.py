@@ -5,13 +5,24 @@ from io import BytesIO
 from PIL import Image
 
 from app.config import settings
-from app.services.ai_errors import FoodAnalysisError, generate_food_json, merge_food_items
+from app.services.ai_errors import (
+    FoodAnalysisError,
+    ImageTooLargeError,
+    generate_food_json,
+    merge_food_items,
+)
 
 logger = logging.getLogger(__name__)
 
 # Gemini tiles an image at roughly 768px per tile, so past about this size the
 # extra pixels buy tokens and upload time rather than accuracy.
 MAX_IMAGE_EDGE = 1024
+
+# Decoding is what costs memory: roughly 4 bytes of RAM per pixel, so 40MP is
+# already ~160MB in one worker. Pillow's own decompression-bomb guard only
+# warns below 89MP, and a photo that never reaches it can still exhaust a small
+# container, so this path sets its own ceiling rather than trusting upstream.
+MAX_IMAGE_PIXELS = 40_000_000
 
 SYSTEM_PROMPT = """คุณเป็นนักโภชนาการ AI ผู้เชี่ยวชาญด้านอาหารไทยและอาหารสากล
 วิเคราะห์รูปอาหาร นับจำนวนรายการตามจาน ชาม หรือแก้วที่แยกกันจริงเท่านั้น
@@ -34,6 +45,9 @@ def analyze_food_image(image_bytes: bytes) -> Dict[str, Any]:
     Analyze food image using Google Gemini Vision (see ai_errors.FOOD_MODELS).
     Falls back to a structured mock response only if GEMINI_API_KEY is not configured.
     """
+    if len(image_bytes or b"") > settings.MAX_UPLOAD_BYTES:
+        raise ImageTooLargeError("Image exceeds the accepted upload size")
+
     if not settings.GEMINI_API_KEY or "mock" in settings.GEMINI_API_KEY:
         logger.warning("Using mock Gemini Vision response (GEMINI_API_KEY is not set).")
         return {"items": [{
@@ -51,7 +65,14 @@ def analyze_food_image(image_bytes: bytes) -> Dict[str, Any]:
     genai.configure(api_key=settings.GEMINI_API_KEY)
 
     try:
-        image = _downscaled(Image.open(BytesIO(image_bytes)))
+        # Image.open reads the header only, so the pixel count can be rejected
+        # before anything is decoded into memory.
+        opened = Image.open(BytesIO(image_bytes))
+        if opened.width * opened.height > MAX_IMAGE_PIXELS:
+            raise ImageTooLargeError("Image exceeds the accepted pixel count")
+        image = _downscaled(opened)
+    except ImageTooLargeError:
+        raise
     except Exception as e:
         raise FoodAnalysisError("Gemini vision analysis failed") from e
 

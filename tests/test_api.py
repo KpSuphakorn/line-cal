@@ -708,3 +708,38 @@ def test_readiness_check_reports_503_when_the_database_is_gone(monkeypatch):
 
     monkeypatch.setattr(_Session, "execute", _broken_execute)
     assert client.get("/ready").status_code == 503
+
+
+def test_a_naive_occurred_at_is_rejected(as_user):
+    """Event times are stored as UTC and read back as Bangkok days, so a
+    timestamp with no offset would silently land a 19:00 workout on the day
+    before. The caller has to say which zone it means."""
+    user_id = "test_user_naive_timestamp"
+    complete_profile(as_user, user_id)
+    program_id = client.get("/api/me/workout-programs").json()["programs"][0]["id"]
+
+    response = client.post("/api/me/workout-sessions", json={
+        "program_id": program_id,
+        "occurred_at": "2026-09-23T19:30:00",
+    })
+
+    assert response.status_code == 422
+    assert "offset" in response.text
+
+
+def test_an_offset_occurred_at_is_normalized_to_utc(as_user):
+    """19:30 Bangkok is 12:30 UTC, and the stored value has to say so."""
+    user_id = "test_user_aware_timestamp"
+    complete_profile(as_user, user_id)
+    program_id = client.get("/api/me/workout-programs").json()["programs"][0]["id"]
+
+    response = client.post("/api/me/workout-sessions", json={
+        "program_id": program_id,
+        "occurred_at": "2026-09-23T19:30:00+07:00",
+    })
+
+    assert response.status_code == 200
+    stored = datetime.fromisoformat(response.json()["occurred_at"])
+    # SQLite drops the offset on read-back, so the converted wall clock is what
+    # proves the normalization; Postgres keeps the zone on the same value.
+    assert (stored.hour, stored.minute) == (12, 30)

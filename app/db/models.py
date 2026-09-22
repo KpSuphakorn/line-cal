@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from sqlalchemy import (
     Column, Integer, Float, String, DateTime, ForeignKey, Text, JSON,
     UniqueConstraint, CheckConstraint, Boolean, Date, Index,
-    false,
+    false, true,
 )
 from sqlalchemy.orm import relationship
 from app.db.database import Base
@@ -14,7 +14,10 @@ class User(Base):
     id = Column(String(64), primary_key=True, index=True) # LINE User ID
     name = Column(String(100), nullable=True)
     birth_date = Column(Date, nullable=True)
-    gender = Column(String(20), nullable=True)
+    # 10, matching the column the migrations actually created. The accepted
+    # values are short words, so the model is corrected rather than the
+    # database widened.
+    gender = Column(String(10), nullable=True)
     age = Column(Integer, nullable=True)
     height_cm = Column(Float, nullable=True)
     weight_kg = Column(Float, nullable=True)
@@ -65,9 +68,13 @@ class FoodLog(Base):
 
 class ProgramTemplate(Base):
     __tablename__ = "program_templates"
+    # Uniqueness is a named constraint and the index is plain, matching what
+    # the migrations built. Declaring `unique=True` on the column instead would
+    # describe one unique index, which is not what the database has.
+    __table_args__ = (UniqueConstraint("key"),)
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    key = Column(String(40), nullable=False, unique=True, index=True)
+    key = Column(String(40), nullable=False, index=True)
     name = Column(String(100), nullable=False)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
 
@@ -135,7 +142,11 @@ class WorkoutSession(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(String(64), ForeignKey("users.id"), nullable=False, index=True)
-    program_id = Column(Integer, ForeignKey("workout_programs.id", ondelete="SET NULL"), nullable=True, index=True)
+    # No ondelete here: the migrations created a plain foreign key, and
+    # delete_program detaches these rows itself precisely because SQLite may
+    # not enforce ON DELETE at all. The application owns the behaviour, so the
+    # model describes the constraint that actually exists.
+    program_id = Column(Integer, ForeignKey("workout_programs.id"), nullable=True, index=True)
     source_event_id = Column(String(128), nullable=True)
     session_type = Column(String(20), nullable=False, default="strength")
     name = Column(String(150), nullable=False)
@@ -230,14 +241,20 @@ class CardioPreset(Base):
 class FoodCapture(Base):
     """A durable, user-owned source event for one editable food draft."""
     __tablename__ = "food_captures"
-    __table_args__ = (UniqueConstraint("user_id", "source_message_id", name="uq_food_capture_user_message"),)
+    __table_args__ = (
+        UniqueConstraint("token"),
+        UniqueConstraint("user_id", "source_message_id", name="uq_food_capture_user_message"),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    token = Column(String(64), unique=True, nullable=False, index=True)
+    token = Column(String(64), nullable=False, index=True)
     user_id = Column(String(64), ForeignKey("users.id"), nullable=False, index=True)
     source = Column(String(20), nullable=False)  # image or text
     source_message_id = Column(String(128), nullable=True)
     status = Column(String(20), nullable=False, default="draft", index=True)
+    # False when the estimate came from the food estimate cache, so a repeated
+    # dish costs the user nothing from the daily AI allowance.
+    used_ai = Column(Boolean, nullable=False, server_default=true(), default=True)
     ai_metadata = Column(JSON, nullable=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
@@ -279,8 +296,9 @@ class FoodAnalysisDraft(Base):
 
 class ProcessedWebhook(Base):
     __tablename__ = "processed_webhooks"
+    __table_args__ = (UniqueConstraint("event_id"),)
     id = Column(Integer, primary_key=True, autoincrement=True)
-    event_id = Column(String(128), nullable=False, unique=True, index=True)
+    event_id = Column(String(128), nullable=False, index=True)
     user_id = Column(String(64), nullable=True, index=True)
     processed_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
 
@@ -296,8 +314,9 @@ class FoodEstimateCache(Base):
     draft the user reviews and edits before confirming.
     """
     __tablename__ = "food_estimate_cache"
+    __table_args__ = (UniqueConstraint("cache_key"),)
     id = Column(Integer, primary_key=True, autoincrement=True)
-    cache_key = Column(String(300), nullable=False, unique=True, index=True)
+    cache_key = Column(String(300), nullable=False, index=True)
     items_json = Column(Text, nullable=False)
     hit_count = Column(Integer, nullable=False, default=0)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
