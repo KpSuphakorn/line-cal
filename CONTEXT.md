@@ -22,9 +22,11 @@ _Avoid_: Meal, food log, meal type
 **Food capture**:
 The shared flow entered by either a food photo or the chat command
 `กิน <description>`. One capture may hold several independent food analysis
-drafts. A photo is split by what the AI sees; typed text is split only where
-the user wrote `+`, so `กิน ข้าวเนื้อทอดผัดพริกเกลือไข่ข้น` is one draft
-named as typed, while `กิน ข้าวมันไก่ + น้ำส้ม` is two.
+drafts. A photo is split by plate/bowl/glass, not by ingredient — rice, meat
+and a fried egg on one plate is one draft; a plate plus a separate drink is
+two. Typed text is split only where the user wrote `+`, so
+`กิน ข้าวเนื้อทอดผัดพริกเกลือไข่ข้น` is one draft named as typed, while
+`กิน ข้าวมันไก่ + น้ำส้ม` is two.
 _Avoid_: Quick log
 
 **Workout program**:

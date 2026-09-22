@@ -3,7 +3,7 @@ import logging
 from typing import Dict, Any
 
 from app.config import settings
-from app.services.ai_errors import generate_food_json
+from app.services.ai_errors import generate_food_json, merge_food_items
 
 logger = logging.getLogger(__name__)
 
@@ -58,40 +58,13 @@ def parse_food_text(text: str) -> Dict[str, Any]:
         log_label="text food parse",
     )
     items = data.get("items") if isinstance(data.get("items"), list) else [data]
-    return {"items": _merge_to_one(items, clean_text) if len(parts) == 1 else items}
+    return {"items": merge_food_items(items, clean_text) if len(parts) == 1 else items}
 
 
 def _split_items(clean_text: str) -> list[str]:
     """One item per separator-delimited part; the user decides the count, not the AI."""
     parts = [part.strip() for part in clean_text.split(ITEM_SEPARATOR)]
     return [part for part in parts if part] or [clean_text]
-
-
-def _merge_to_one(items: list[Any], food_name: str) -> list[Dict[str, Any]]:
-    """Fold a single dish back into one row when the model splits it anyway.
-
-    The model still reasons component by component, which keeps the totals
-    good, but "ข้าวเนื้อทอดผัดพริกเกลือไข่ข้น" is one plate the user ordered
-    and has to be one row to stay editable as what they typed.
-    """
-    items = [item for item in items if isinstance(item, dict)]
-    if len(items) <= 1:
-        return items or [{"food_name": food_name}]
-
-    def total(field: str) -> float:
-        return round(sum(float(item.get(field) or 0) for item in items), 1)
-
-    confidences = [item.get("confidence") for item in items if item.get("confidence") is not None]
-    return [{
-        "food_name": food_name,
-        "portion": items[0].get("portion") or "1 ที่",
-        "calories": total("calories"),
-        "protein": total("protein"),
-        "carbs": total("carbs"),
-        "fat": total("fat"),
-        "confidence": min(float(value) for value in confidences) if confidences else None,
-        "notes": " • ".join(str(item.get("food_name") or "").strip() for item in items if item.get("food_name")),
-    }]
 
 
 def _default_food_response(food_name: str) -> Dict[str, Any]:

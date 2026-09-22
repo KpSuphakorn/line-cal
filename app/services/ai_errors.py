@@ -64,3 +64,36 @@ def generate_food_json(genai_module: Any, contents: list, log_label: str) -> dic
             continue
 
     raise FoodAnalysisError(f"Gemini {log_label} failed") from last_error
+
+
+def merge_food_items(items: list[Any], food_name: str | None = None) -> list[dict]:
+    """Fold component rows the model reported for one dish into a single row.
+
+    The model still reasons ingredient by ingredient for accuracy, but a dish
+    the user experiences as one plate has to stay one row. Sums calories and
+    macros, keeps the lowest confidence across components, and lists the
+    components in `notes`.
+
+    `food_name` names the merged row when given (the text the user actually
+    typed). Otherwise the components' own names are joined, since there is no
+    user-typed anchor to fall back to (a food photo has none).
+    """
+    items = [item for item in items if isinstance(item, dict)]
+    if len(items) <= 1:
+        return items or ([{"food_name": food_name}] if food_name else [])
+
+    def total(field: str) -> float:
+        return round(sum(float(item.get(field) or 0) for item in items), 1)
+
+    names = [str(item.get("food_name") or "").strip() for item in items if item.get("food_name")]
+    confidences = [item.get("confidence") for item in items if item.get("confidence") is not None]
+    return [{
+        "food_name": food_name or " • ".join(names) or "อาหารที่ตรวจพบ",
+        "portion": items[0].get("portion") or "1 ที่",
+        "calories": total("calories"),
+        "protein": total("protein"),
+        "carbs": total("carbs"),
+        "fat": total("fat"),
+        "confidence": min(float(value) for value in confidences) if confidences else None,
+        "notes": " • ".join(names) if food_name else "",
+    }]

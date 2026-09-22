@@ -34,10 +34,10 @@ Both entry points share one flow:
 - Separate typed items with `+`, for example `กิน ข้าวมันไก่ + น้ำส้ม`.
 
 A capture holds one or more independent food analysis drafts. A photo is split
-by what the AI sees, so one plate may produce rice, chicken, egg and a drink.
-Typed text is split only where the user wrote `+`: one dish stays one draft,
-named as typed, rather than being broken into its components. The response
-offers:
+by plate/bowl/glass, not by ingredient: rice, chicken and egg on one plate is
+one draft, a plate plus a separate drink is two. Typed text is split only
+where the user wrote `+`: one dish stays one draft, named as typed, rather
+than being broken into its components. The response offers:
 
 - Edit items in LIFF.
 - Confirm all items.
