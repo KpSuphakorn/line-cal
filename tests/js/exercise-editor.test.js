@@ -73,6 +73,21 @@ test('the reorder buttons are arrow icons that still announce themselves', () =>
   );
 });
 
+test('the row actions stay together against the right edge', () => {
+  const list = exerciseList(window, [...draftRows(), { name: 'Third', sets: 3, repetitions: 10 }]);
+  const actions = list.querySelectorAll('.exercise')[1].querySelector('.exercise-actions');
+
+  assert.equal(window.getComputedStyle(actions).justifyContent, 'flex-end');
+  for (const control of actions.querySelectorAll('button')) {
+    const style = window.getComputedStyle(control);
+    const name = control.getAttribute('aria-label') || control.textContent;
+    // An auto margin on any one of them eats the free space and strands that
+    // button on the opposite side of the row from the rest of the group.
+    assert.notEqual(style.marginLeft, 'auto', `${name} must not be pushed right`);
+    assert.notEqual(style.marginRight, 'auto', `${name} must not be pushed left`);
+  }
+});
+
 test('the session editor has no reorder buttons but still protects drafts', () => {
   const rows = draftRows();
   const list = exerciseList(window, rows, { reorder: false });
