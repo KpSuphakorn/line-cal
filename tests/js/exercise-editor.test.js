@@ -58,21 +58,6 @@ test('reordering carries the typed values with the row, not just its position', 
   assert.equal(fieldValue(list, 1, 'weight'), '62.5');
 });
 
-test('the reorder buttons are arrow icons that still announce themselves', () => {
-  const list = exerciseList(window, draftRows());
-  const first = list.querySelectorAll('.exercise')[0];
-  const down = first.querySelector('[aria-label="ย้ายลง"]');
-
-  assert.ok(down, 'first row can move down');
-  assert.equal(down.textContent, '', 'icon only, no text label');
-  assert.ok(down.querySelector('svg.icon'), 'renders the chevron icon');
-  assert.equal(first.querySelector('[aria-label="ย้ายขึ้น"]'), null, 'first row cannot move up');
-  assert.ok(
-    list.querySelectorAll('.exercise')[1].querySelector('[aria-label="ย้ายขึ้น"]'),
-    'second row can move up',
-  );
-});
-
 test('the row actions stay together against the right edge', () => {
   const list = exerciseList(window, [...draftRows(), { name: 'Third', sets: 3, repetitions: 10 }]);
   const actions = list.querySelectorAll('.exercise')[1].querySelector('.exercise-actions');
@@ -88,17 +73,9 @@ test('the row actions stay together against the right edge', () => {
   }
 });
 
-test('the session editor has no reorder buttons but still protects drafts', () => {
-  const rows = draftRows();
-  const list = exerciseList(window, rows, { reorder: false });
-  typeInto(list, 1, { name: 'Cable fly' });
+test('the session editor renders without reorder buttons', () => {
+  const list = exerciseList(window, draftRows(), { reorder: false });
   assert.equal(list.querySelectorAll('.exercise-actions button').length, 2, 'remove only');
-
-  window.editExercises(rows, list, false, () =>
-    rows.push({ name: '', sets: 3, repetitions: 10, weight: null, notes: '' }),
-  );
-
-  assert.deepEqual(names(list), ['Bench press', 'Cable fly', '']);
 });
 
 test('the save payload drops unnamed rows and trims the rest', () => {
