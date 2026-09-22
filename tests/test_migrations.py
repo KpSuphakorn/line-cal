@@ -44,7 +44,7 @@ def test_fresh_sqlite_migrations_reach_head(tmp_path):
 
     with sqlite3.connect(database_path) as connection:
         revision = connection.execute("SELECT version_num FROM alembic_version").fetchone()[0]
-        assert revision == "0007_profile_targets_customized"
+        assert revision == "0008_food_estimate_cache"
 
         food_columns = {
             row[1]: row[3]
@@ -58,6 +58,16 @@ def test_fresh_sqlite_migrations_reach_head(tmp_path):
             for row in connection.execute("PRAGMA index_list(food_logs)")
         }
         assert "ix_food_logs_user_logged_at" in indexes
+
+        # The cache is looked up on every typed food message, so its key has to
+        # be indexed and unique rather than scanned.
+        cache_columns = {row[1] for row in connection.execute("PRAGMA table_info(food_estimate_cache)")}
+        assert {"cache_key", "items_json", "hit_count"} <= cache_columns
+        cache_indexes = {
+            row[1]: row[2]
+            for row in connection.execute("PRAGMA index_list(food_estimate_cache)")
+        }
+        assert any(unique for unique in cache_indexes.values()), "cache_key must be unique"
 
         tables = {
             row[0]
@@ -151,7 +161,7 @@ def test_existing_cardio_presets_table_is_adopted_by_0006(tmp_path):
     )
     with sqlite3.connect(database_path) as connection:
         revision = connection.execute("SELECT version_num FROM alembic_version").fetchone()[0]
-        assert revision == "0007_profile_targets_customized"
+        assert revision == "0008_food_estimate_cache"
 
 
 def test_malformed_existing_cardio_presets_table_fails_adoption(tmp_path):

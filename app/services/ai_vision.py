@@ -9,6 +9,10 @@ from app.services.ai_errors import FoodAnalysisError, generate_food_json, merge_
 
 logger = logging.getLogger(__name__)
 
+# Gemini tiles an image at roughly 768px per tile, so past about this size the
+# extra pixels buy tokens and upload time rather than accuracy.
+MAX_IMAGE_EDGE = 1024
+
 SYSTEM_PROMPT = """คุณเป็นนักโภชนาการ AI ผู้เชี่ยวชาญด้านอาหารไทยและอาหารสากล
 วิเคราะห์รูปอาหาร นับจำนวนรายการตามจาน ชาม หรือแก้วที่แยกกันจริงเท่านั้น
 ไม่ใช่ตามส่วนประกอบ เช่น ข้าว เนื้อ ไข่ดาว ที่อยู่ในจานเดียวกัน คือ 1 รายการ
@@ -47,13 +51,29 @@ def analyze_food_image(image_bytes: bytes) -> Dict[str, Any]:
     genai.configure(api_key=settings.GEMINI_API_KEY)
 
     try:
-        image = Image.open(BytesIO(image_bytes))
+        image = _downscaled(Image.open(BytesIO(image_bytes)))
     except Exception as e:
         raise FoodAnalysisError("Gemini vision analysis failed") from e
 
     data = generate_food_json(genai, [SYSTEM_PROMPT, image], log_label="vision analysis")
     raw_items = data.get("items") if isinstance(data.get("items"), list) else [data]
     return {"items": _merge_by_plate(raw_items)}
+
+
+def _downscaled(image: Image.Image) -> Image.Image:
+    """Shrink a phone photo before it goes over the wire.
+
+    LINE serves the original capture, which is routinely 3000px+ and several
+    megabytes. Gemini bills and processes images as tiles, so the extra pixels
+    cost upload time and tokens without helping it recognise a plate of food.
+    Images already under the limit are returned untouched.
+    """
+    longest = max(image.size)
+    if longest <= MAX_IMAGE_EDGE:
+        return image
+    scale = MAX_IMAGE_EDGE / longest
+    target = (max(1, round(image.width * scale)), max(1, round(image.height * scale)))
+    return image.resize(target, Image.LANCZOS)
 
 
 def _merge_by_plate(items: list[Any]) -> list[Dict[str, Any]]:

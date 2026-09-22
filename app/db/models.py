@@ -283,3 +283,22 @@ class ProcessedWebhook(Base):
     event_id = Column(String(128), nullable=False, unique=True, index=True)
     user_id = Column(String(64), nullable=True, index=True)
     processed_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+
+
+class FoodEstimateCache(Base):
+    """A previously computed AI estimate for one exact food description.
+
+    A personal food log repeats itself — the same lunch typed the same way —
+    and every repeat otherwise spends a request from the shared per-model daily
+    Gemini allowance to re-derive the same numbers. Entries are keyed on the
+    normalized text only, never on a user, so the estimate is not user data:
+    it is what the model says "ข้าวมันไก่" contains. The result is still only a
+    draft the user reviews and edits before confirming.
+    """
+    __tablename__ = "food_estimate_cache"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    cache_key = Column(String(300), nullable=False, unique=True, index=True)
+    items_json = Column(Text, nullable=False)
+    hit_count = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    last_used_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)

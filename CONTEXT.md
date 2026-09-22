@@ -29,6 +29,13 @@ two. Typed text is split only where the user wrote `+`, so
 `กิน ข้าวมันไก่ + น้ำส้ม` is two.
 _Avoid_: Quick log
 
+**Food estimate cache**:
+A stored AI estimate for one exact food description, keyed on the normalized
+text and owned by nobody — it records what the model says a dish contains, not
+what a person ate. A repeated typed dish is served from it instead of spending
+a request from the per-model daily Gemini allowance. Photos are never cached.
+_Avoid_: Food history, saved meal
+
 **Workout program**:
 A user-created, reusable collection of exercises. It is not tied to a weekday;
 the user chooses which program to perform when starting a workout.

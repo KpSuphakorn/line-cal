@@ -36,7 +36,8 @@ from app.services.fitness import (
 )
 from app.services.workouts import create_cardio_session, create_strength_session, list_cardio_presets, list_programs
 from app.services.ai_vision import analyze_food_image
-from app.services.ai_chat import parse_food_text
+from app.services.ai_chat import parse_food_text, strip_food_command
+from app.services import food_cache
 from app.services.food_capture import (
     create_capture,
     serialize_capture,
@@ -147,14 +148,25 @@ def _capture_food(
     analyzer,
     messaging_api: MessagingApi,
     reply_token: str,
+    cache_text: str | None = None,
 ) -> None:
-    """Shared image/text capture path; only the analyzer differs."""
+    """Shared image/text capture path; only the analyzer differs.
+
+    `cache_text` is set for typed food only. A photo is never the same twice,
+    but a typed lunch usually is, and reusing that estimate costs no request
+    from the shared daily Gemini allowance.
+    """
     if ai_quota_remaining(db, user_id) <= 0:
         reply_text(messaging_api, reply_token, "⏳ วันนี้ใช้โควต้าวิเคราะห์อาหารครบแล้ว ลองใหม่พรุ่งนี้ได้เลยครับ")
         return
     try:
-        result = analyzer()
-        capture = create_capture(db, user_id, source, result.get("items", [result]), source_message_id=source_message_id)
+        items = food_cache.lookup(db, cache_text) if cache_text else None
+        if items is None:
+            result = analyzer()
+            items = result.get("items", [result])
+            if cache_text:
+                food_cache.store(db, cache_text, items)
+        capture = create_capture(db, user_id, source, items, source_message_id=source_message_id)
         if not capture.drafts:
             reply_text(messaging_api, reply_token, "🤔 ยังไม่พบรายการอาหารที่วิเคราะห์ได้ ลองพิมพ์รายละเอียดเองอีกครั้งครับ")
             return
@@ -242,7 +254,11 @@ def handle_text_message(event: MessageEvent, user_id: str, messaging_api: Messag
     if text.startswith("กิน "):
         if not require_completed_profile(db, user_id, messaging_api, event.reply_token):
             return
-        _capture_food(db, user_id, "text", getattr(event.message, "id", None), lambda: parse_food_text(raw_text), messaging_api, event.reply_token)
+        _capture_food(
+            db, user_id, "text", getattr(event.message, "id", None),
+            lambda: parse_food_text(raw_text), messaging_api, event.reply_token,
+            cache_text=strip_food_command(raw_text),
+        )
         return
 
     if text in {"โปรไฟล์", "profile"}:

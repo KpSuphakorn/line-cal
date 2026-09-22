@@ -27,17 +27,25 @@ FOOD_PARSE_PROMPT = """คุณเป็นนักโภชนาการ AI
 """
 
 
+def strip_food_command(text: str) -> str:
+    """Drop the leading command word, leaving just what the user said they ate.
+
+    Shared with the caller so a cache key is built from the same string the
+    model is asked about, rather than from the raw message.
+    """
+    clean_text = (text or "").strip()
+    for prefix in ["กิน ", "เพิ่ม ", "กิน", "เพิ่ม"]:
+        if clean_text.startswith(prefix):
+            return clean_text[len(prefix):].strip()
+    return clean_text
+
+
 def parse_food_text(text: str) -> Dict[str, Any]:
     """
     Use Gemini Flash text-only to estimate calories and macros from a Thai food description.
     Falls back to a simple estimate if the API is not configured.
     """
-    # Clean input: remove leading keywords
-    clean_text = text.strip()
-    for prefix in ["กิน ", "เพิ่ม ", "กิน", "เพิ่ม"]:
-        if clean_text.startswith(prefix):
-            clean_text = clean_text[len(prefix):].strip()
-            break
+    clean_text = strip_food_command(text)
 
     if not clean_text:
         return _default_food_response("อาหารทั่วไป")
