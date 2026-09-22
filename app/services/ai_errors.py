@@ -2,7 +2,7 @@
 import json
 import logging
 import time
-from typing import Any
+from typing import Any, Iterator
 
 logger = logging.getLogger(__name__)
 
@@ -35,11 +35,43 @@ FOOD_MODELS = (
 #
 # Webhook processing runs in a BackgroundTask, so these no longer have to fit
 # inside LINE's webhook window. The remaining ceiling is the reply token, which
-# the total budget stays well clear of. Per-model timeout has to clear the
-# slowest healthy model above (12.5s) without letting one hung model eat the
-# whole budget.
-MODEL_TIMEOUT_SECONDS = 14
+# the total budget stays well clear of.
+#
+# 8s is measured, not guessed. 12 successful calls on 2026-09-23 ran
+# 2.6 3.8 4.0 4.6 4.7 5.6 6.1 6.2 7.0 11.8 13.8 19.5 (p50 5.8s), and expected
+# end-to-end latency for "give up at T and try again" over that sample is:
+#
+#   T= 5s -> 10.9s     T= 8s ->  7.6s     T=12s ->  8.0s
+#   T= 6s -> 10.2s     T=10s ->  8.3s     T=14s ->  7.7s
+#
+# So a tighter timeout does not buy speed — the spread is continuous, not a
+# fast mode plus a stalled mode, and cutting to 5s makes things worse. 8s is
+# picked because it ties for the best expected latency while capping what a
+# genuinely hung model (the 15s+ stalls seen on 3.5-flash-lite) can waste, and
+# leaves room for three attempts inside the budget instead of two.
+MODEL_TIMEOUT_SECONDS = 8
 TOTAL_BUDGET_SECONDS = 28
+
+# Starting an attempt that cannot plausibly finish just burns the remainder.
+MIN_ATTEMPT_SECONDS = 3
+
+# One pass over the chain is not a retry, it is a single shot at each model.
+# Re-walking it lets a model that stalled once answer on the next attempt.
+MAX_ROUNDS = 3
+
+# How long a model that explicitly refused sits out. Note what is NOT here: a
+# timeout never benches a model. The measured spread above is one model's own
+# ordinary behaviour, so treating a slow call as "this model is broken" would
+# bench the only healthy model we have.
+_COOLDOWN_SECONDS = {
+    "missing": 86_400.0,   # 404 — not served to this account, not coming back today
+    "quota": 900.0,        # 429 — the free-tier allowance is spent
+    "unavailable": 60.0,   # 503 — Google calls these spikes temporary
+}
+
+# Module-level so a refusal is remembered across requests: re-probing a model
+# that just returned 503 cost a measured 4.1s on every single request.
+_cooldown_until: dict[str, float] = {}
 
 
 class FoodAnalysisError(RuntimeError):
@@ -49,6 +81,40 @@ class FoodAnalysisError(RuntimeError):
     failure so a made-up answer is never shown to the user as if it were a
     real AI result.
     """
+
+
+def _refusal_kind(error: Exception) -> str | None:
+    """Classify an error as a refusal worth benching the model for, or None.
+
+    Matched on the message text rather than on google.api_core exception types:
+    the same condition reaches us as a gRPC error, a REST error or a plain
+    RuntimeError depending on transport and SDK version, and only the status
+    code is reliably present in all of them.
+    """
+    text = str(error).lower()
+    if "404" in text or "not found" in text:
+        return "missing"
+    if "429" in text or "quota" in text or "resource_exhausted" in text:
+        return "quota"
+    if "503" in text or "unavailable" in text or "high demand" in text:
+        return "unavailable"
+    return None
+
+
+def _available_models() -> list[str]:
+    """The chain minus anything still cooling off.
+
+    Falls back to the whole chain when everything is benched: a stale cooldown
+    must never be the reason the user gets no answer at all.
+    """
+    now = time.monotonic()
+    return [name for name in FOOD_MODELS if _cooldown_until.get(name, 0.0) <= now] or list(FOOD_MODELS)
+
+
+def _attempt_sequence() -> Iterator[str]:
+    """Model names to try, in order, re-reading cooldowns before each round."""
+    for _ in range(MAX_ROUNDS):
+        yield from _available_models()
 
 
 def generate_food_json(genai_module: Any, contents: list, log_label: str) -> dict:
@@ -61,14 +127,16 @@ def generate_food_json(genai_module: Any, contents: list, log_label: str) -> dic
     """
     last_error: Exception | None = None
     deadline = time.monotonic() + TOTAL_BUDGET_SECONDS
-    for attempt, model_name in enumerate(FOOD_MODELS, 1):
+    attempt = 0
+    for model_name in _attempt_sequence():
         remaining = deadline - time.monotonic()
-        if remaining < 1:
+        if remaining < MIN_ATTEMPT_SECONDS:
             logger.error(
-                "Gemini (%s) budget of %ss exhausted before trying %s",
-                log_label, TOTAL_BUDGET_SECONDS, model_name,
+                "Gemini (%s) ran out of its %ss budget after %d attempt(s)",
+                log_label, TOTAL_BUDGET_SECONDS, attempt,
             )
             break
+        attempt += 1
         try:
             model = genai_module.GenerativeModel(model_name)
             response = model.generate_content(
@@ -99,7 +167,13 @@ def generate_food_json(genai_module: Any, contents: list, log_label: str) -> dic
                 )
             return parsed
         except Exception as e:
-            logger.error(f"Error calling Gemini ({log_label}) with {model_name}: {e}")
+            kind = _refusal_kind(e)
+            if kind:
+                _cooldown_until[model_name] = time.monotonic() + _COOLDOWN_SECONDS[kind]
+            logger.error(
+                "Error calling Gemini (%s) with %s%s: %s",
+                log_label, model_name, f" [benched: {kind}]" if kind else "", e,
+            )
             last_error = e
             continue
 
