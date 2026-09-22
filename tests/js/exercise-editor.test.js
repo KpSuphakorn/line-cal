@@ -52,10 +52,25 @@ test('reordering carries the typed values with the row, not just its position', 
   typeInto(list, 0, { name: 'Flat bench', weight: 62.5 });
   typeInto(list, 1, { name: 'Incline bench' });
 
-  clickRowAction(list, 1, 'ขึ้น');
+  clickRowAction(list, 1, 'ย้ายขึ้น');
 
   assert.deepEqual(names(list), ['Incline bench', 'Flat bench']);
   assert.equal(fieldValue(list, 1, 'weight'), '62.5');
+});
+
+test('the reorder buttons are arrow icons that still announce themselves', () => {
+  const list = exerciseList(window, draftRows());
+  const first = list.querySelectorAll('.exercise')[0];
+  const down = first.querySelector('[aria-label="ย้ายลง"]');
+
+  assert.ok(down, 'first row can move down');
+  assert.equal(down.textContent, '', 'icon only, no text label');
+  assert.ok(down.querySelector('svg.icon'), 'renders the chevron icon');
+  assert.equal(first.querySelector('[aria-label="ย้ายขึ้น"]'), null, 'first row cannot move up');
+  assert.ok(
+    list.querySelectorAll('.exercise')[1].querySelector('[aria-label="ย้ายขึ้น"]'),
+    'second row can move up',
+  );
 });
 
 test('the session editor has no reorder buttons but still protects drafts', () => {

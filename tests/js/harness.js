@@ -57,11 +57,14 @@ function typeInto(container, index, values) {
   }
 }
 
-/** Click a row's action button by its Thai label. */
+/**
+ * Click a row's action button by the label a user or screen reader sees, which
+ * for the icon-only reorder buttons is their aria-label rather than any text.
+ */
 function clickRowAction(container, index, label) {
   const row = container.querySelectorAll('.exercise')[index];
   const target = [...row.querySelectorAll('.exercise-actions button')].find(
-    (candidate) => candidate.textContent === label,
+    (candidate) => candidate.textContent === label || candidate.getAttribute('aria-label') === label,
   );
   if (!target) throw new Error(`no "${label}" button on row ${index}`);
   target.click();
