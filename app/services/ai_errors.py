@@ -1,6 +1,7 @@
 """Shared error type and call helper for Gemini food-analysis requests."""
 import json
 import logging
+import time
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -11,16 +12,34 @@ logger = logging.getLogger(__name__)
 # genai.list_models(): that endpoint listed gemini-2.5-flash as available while
 # calls to it 404'd as "no longer available to new users".
 #
-# Measured on this account: 3.5-flash-lite answers in ~0.9s, while 3.6-flash is
-# capped at 20 requests/day and 3.7-flash / 3.1-flash-lite both time out, which
-# only spends the webhook's time budget without producing an answer.
-FOOD_MODELS = ("gemini-3.5-flash-lite",)
+# Free-tier availability moves without warning, so this is a chain and not a
+# single model. Measured on this account with the real food prompt on
+# 2026-09-23, after 3.5-flash-lite (previously ~0.9s) degraded to 15s+ hangs:
+#
+#   gemini-3.6-flash        5.5s / 7.7s   ok, but capped at 20 requests/day
+#   gemini-3.1-flash-lite   6.6s / 12.5s  ok, slower and more variable
+#   gemini-3.5-flash-lite   timed out twice at 15s — kept last so it serves
+#                           again by itself once Google's side recovers
+#
+# Models are tried in order and only on failure, so a healthy first entry costs
+# exactly one request — a chain does not spend more quota than a single model.
+FOOD_MODELS = (
+    "gemini-3.6-flash",
+    "gemini-3.1-flash-lite",
+    "gemini-3.5-flash-lite",
+)
 
 # A 429 from a quota-exhausted model carries a "retry in 22s" hint that
-# google-api-core honours by sleeping and retrying in-process. The whole call
-# has to finish inside LINE's webhook window, and the model chain above already
-# covers an exhausted model, so retry is disabled: fail fast, try the next one.
-GEMINI_REQUEST_OPTIONS = {"retry": None, "timeout": 8}
+# google-api-core honours by sleeping and retrying in-process, so retry stays
+# disabled: fail fast and let the chain above provide the real retry.
+#
+# Webhook processing runs in a BackgroundTask, so these no longer have to fit
+# inside LINE's webhook window. The remaining ceiling is the reply token, which
+# the total budget stays well clear of. Per-model timeout has to clear the
+# slowest healthy model above (12.5s) without letting one hung model eat the
+# whole budget.
+MODEL_TIMEOUT_SECONDS = 14
+TOTAL_BUDGET_SECONDS = 28
 
 
 class FoodAnalysisError(RuntimeError):
@@ -35,11 +54,21 @@ class FoodAnalysisError(RuntimeError):
 def generate_food_json(genai_module: Any, contents: list, log_label: str) -> dict:
     """Call Gemini across FOOD_MODELS in order, returning the first successful JSON reply.
 
-    Raises FoodAnalysisError only once every pinned model has failed — never
-    falls back to fabricated data.
+    A model that hangs must not consume the time the next one needs, so each
+    attempt is capped both by its own timeout and by what is left of the shared
+    budget. Raises FoodAnalysisError only once every pinned model has failed —
+    never falls back to fabricated data.
     """
     last_error: Exception | None = None
-    for model_name in FOOD_MODELS:
+    deadline = time.monotonic() + TOTAL_BUDGET_SECONDS
+    for attempt, model_name in enumerate(FOOD_MODELS, 1):
+        remaining = deadline - time.monotonic()
+        if remaining < 1:
+            logger.error(
+                "Gemini (%s) budget of %ss exhausted before trying %s",
+                log_label, TOTAL_BUDGET_SECONDS, model_name,
+            )
+            break
         try:
             model = genai_module.GenerativeModel(model_name)
             response = model.generate_content(
@@ -48,7 +77,10 @@ def generate_food_json(genai_module: Any, contents: list, log_label: str) -> dic
                     "response_mime_type": "application/json",
                     "temperature": 0.2,
                 },
-                request_options=GEMINI_REQUEST_OPTIONS,
+                request_options={
+                    "retry": None,
+                    "timeout": min(MODEL_TIMEOUT_SECONDS, remaining),
+                },
             )
             content_text = response.text.strip()
             if content_text.startswith("```json"):
@@ -57,7 +89,15 @@ def generate_food_json(genai_module: Any, contents: list, log_label: str) -> dic
                 content_text = content_text[3:]
             if content_text.endswith("```"):
                 content_text = content_text[:-3]
-            return json.loads(content_text.strip())
+            parsed = json.loads(content_text.strip())
+            if attempt > 1:
+                # Which model actually answered is invisible otherwise, so a
+                # degraded primary looks like "it just got slower" in the logs.
+                logger.warning(
+                    "Gemini (%s) answered with fallback model %s after %d failed attempt(s)",
+                    log_label, model_name, attempt - 1,
+                )
+            return parsed
         except Exception as e:
             logger.error(f"Error calling Gemini ({log_label}) with {model_name}: {e}")
             last_error = e
