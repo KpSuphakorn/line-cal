@@ -104,3 +104,26 @@ def test_production_rejects_local_webapp_url(monkeypatch):
         monkeypatch.setattr(settings, name, value)
     with pytest.raises(RuntimeError, match="WEBAPP_BASE_URL.*HTTPS"):
         validate_production_settings()
+
+
+def test_documented_examples_agree_with_the_settings_defaults():
+    """Copy-paste templates that disagree with the code silently override it.
+
+    AI_DAILY_LIMIT drifted across three files at once, so the agreement is
+    asserted here rather than re-checked by hand on every change.
+    """
+    import re
+    from pathlib import Path
+
+    from app.config import Settings
+
+    root = Path(__file__).resolve().parents[1]
+    documented = {
+        "AI_DAILY_LIMIT": int(Settings.model_fields["AI_DAILY_LIMIT"].default),
+        "MAX_UPLOAD_BYTES": int(Settings.model_fields["MAX_UPLOAD_BYTES"].default),
+    }
+    for relative in (".env.example", "docs/supabase-setup.md"):
+        text = (root / relative).read_text(encoding="utf-8")
+        for name, expected in documented.items():
+            for found in re.findall(rf"^{name}=(\d+)$", text, flags=re.MULTILINE):
+                assert int(found) == expected, f"{relative} sets {name}={found}, default is {expected}"

@@ -208,9 +208,11 @@ with `(user_id, occurred_at)` where history queries need them.
 
 ### AI quota
 
-Do not add a quota table for the pilot. Count the user's food captures within
-the Bangkok day and compare it with `AI_DAILY_LIMIT`, default 30. Manual editing,
-history and exercise remain unlimited.
+Do not add a quota table for the pilot. Count the user's food captures that
+actually called the model (`used_ai`) within the Bangkok day and compare it with
+`AI_DAILY_LIMIT`, default 60. A capture served from the food estimate cache
+spends nothing and is not counted. Manual editing, history and exercise remain
+unlimited.
 
 ## Delivery slices
 

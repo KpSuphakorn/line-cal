@@ -23,6 +23,7 @@ from app.services.ai_vision import analyze_food_image
 from app.services.ai_errors import FoodAnalysisError, ImageTooLargeError
 from app.services.food_capture import (
     MAX_CALORIES,
+    MAX_DRAFT_ITEMS,
     MAX_MACRO_GRAMS,
     get_editable_capture,
     serialize_capture,
@@ -236,7 +237,10 @@ class FoodDraftItemPayload(BaseModel):
 
 
 class FoodDraftPayload(BaseModel):
-    items: list[FoodDraftItemPayload] = Field(min_length=1, max_length=50)
+    # The same bound the normalizer enforces. A looser limit here would accept
+    # the request, store the first MAX_DRAFT_ITEMS and drop the rest behind a
+    # 200, which loses the user's edits without telling them.
+    items: list[FoodDraftItemPayload] = Field(min_length=1, max_length=MAX_DRAFT_ITEMS)
 
 
 class UserProfilePayload(BaseModel):

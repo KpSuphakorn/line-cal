@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from app.main import app
 from app.db.database import init_db
 from app.auth import AuthenticatedUser, get_current_user
-from app.services.food_capture import create_capture
+from app.services.food_capture import MAX_DRAFT_ITEMS, create_capture
 
 # Initialize tables for tests
 init_db()
@@ -743,3 +743,26 @@ def test_an_offset_occurred_at_is_normalized_to_utc(as_user):
     # SQLite drops the offset on read-back, so the converted wall clock is what
     # proves the normalization; Postgres keeps the zone on the same value.
     assert (stored.hour, stored.minute) == (12, 30)
+
+
+def test_an_edit_beyond_the_draft_cap_is_refused_rather_than_truncated(as_user):
+    """The normalizer stores at most MAX_DRAFT_ITEMS. If the endpoint accepted
+    more, the extra rows would vanish behind a 200 and the user would never
+    learn their edits were dropped."""
+    from app.db.database import SessionLocal
+
+    user_id = "capture-draft-cap-owner"
+    complete_profile(as_user, user_id)
+    db = SessionLocal()
+    token = create_capture(db, user_id, "text", [{"food_name": "ข้าว", "calories": 400}]).token
+    db.close()
+
+    def edit(count):
+        return client.put(f"/api/me/food-captures/{token}", json={
+            "items": [{"food_name": f"เมนู {i}", "calories": 100} for i in range(count)],
+        })
+
+    assert edit(MAX_DRAFT_ITEMS + 1).status_code == 422
+    accepted = edit(MAX_DRAFT_ITEMS)
+    assert accepted.status_code == 200
+    assert len(accepted.json()["items"]) == MAX_DRAFT_ITEMS, "nothing was silently dropped"
