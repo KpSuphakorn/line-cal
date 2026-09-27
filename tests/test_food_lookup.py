@@ -81,6 +81,7 @@ def test_the_lookup_card_offers_nothing_to_tap():
 
     assert "footer" not in card
     assert "action" not in json.dumps(card)
+    assert "แค่ดูข้อมูล ยังไม่ได้บันทึก" not in json.dumps(card, ensure_ascii=False)
 
 
 def test_lookup_card_shows_every_supported_item_and_matches_its_total():

@@ -121,18 +121,12 @@ def create_food_analyzed_card(food_data: Dict[str, Any], capture_token: str, use
 
 
 def create_food_lookup_card(food_data: Dict[str, Any]) -> Dict[str, Any]:
-    """Answer `ถาม <อาหาร>`: the estimate alone, with nothing to confirm.
-
-    Deliberately has no footer. The lookup writes nothing to the user's day,
-    so a button here would only suggest otherwise; the closing line tells the
-    user how to log it if they decide to.
-    """
+    """Answer `ถาม <อาหาร>` with a read-only estimate and no footer."""
     items = _food_items(food_data)
     total = _total_kcal(items)
     body = [
         {"type": "text", "text": f"รวมประมาณ {total:.0f} kcal", "size": "sm", "weight": "bold", "color": "#1E3A8A"},
         *_food_rows(items),
-        {"type": "text", "text": "ℹ️ แค่ดูข้อมูล ยังไม่ได้บันทึก — พิมพ์ กิน ตามด้วยชื่อเมนูเพื่อบันทึก", "size": "xxs", "color": "#64748B", "wrap": True, "margin": "md"},
     ]
     return _bubble("🔎 แคลอรีโดยประมาณ", body, color="#1D4ED8")
 
