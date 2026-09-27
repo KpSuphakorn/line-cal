@@ -124,7 +124,7 @@ DATABASE_URL=sqlite:///./line_cal.db
 # ใช้ Direct connection (หรือ Session pooler 5432) สำหรับ Alembic migrations;
 # อย่าใช้ Transaction pooler 6543 ใน migration
 # Production also requires APP_ENV=production, LINE_LOGIN_CHANNEL_ID, LIFF_ID,
-# WEBAPP_BASE_URL, and GEMINI_API_KEY. Apply `alembic upgrade head` before starting the service.
+# WEBAPP_BASE_URL, and GEMINI_API_KEY.
 ```
 
 ### 3. Run Locally
@@ -147,6 +147,20 @@ npm install        # once
 npm test           # Web App: LIFF dashboard behaviour, run in jsdom
 ```
 ชุดทดสอบฝั่ง Web App โหลด `app/templates/dashboard.html` ตัวจริงเข้า jsdom แล้วเรียกฟังก์ชันของหน้าเว็บโดยตรง จึงไม่มีสำเนาโค้ดที่หลุดจากของจริงได้
+
+### Deploy to Railway
+
+Push to `main` to trigger GitHub Actions tests and Railway auto-deploy. Railway's
+pre-deploy command is `alembic upgrade head`, so schema migrations run before the
+new application starts; there is no routine manual migration step. If the
+migration fails, Railway does not activate that deployment. Check its pre-deploy
+logs and fix the cause before pushing again.
+
+Railway currently auto-deploys independently of GitHub Actions, so a failed CI
+run is **not** guaranteed to stop a deploy. Enable **Wait for CI** in Railway's
+service settings when that option becomes available. Until then, check CI before
+considering a release verified. Use manual `alembic upgrade head` only for the
+initial database setup or a diagnosed repair, not before every push.
 
 ---
 

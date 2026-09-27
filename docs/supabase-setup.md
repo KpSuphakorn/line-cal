@@ -34,7 +34,8 @@ Keep these only in `.env` or the deployment platform's secret manager:
 ```dotenv
 APP_ENV=production
 DATABASE_URL=postgresql://runtime-connection-from-supabase?sslmode=require
-MIGRATION_DATABASE_URL=postgresql://direct-connection-from-supabase?sslmode=require
+# Optional when the migration connection must differ from DATABASE_URL:
+# MIGRATION_DATABASE_URL=postgresql://direct-connection-from-supabase?sslmode=require
 
 LINE_CHANNEL_SECRET=...
 LINE_CHANNEL_ACCESS_TOKEN=...
@@ -47,24 +48,28 @@ AI_DAILY_LIMIT=60
 
 Never put these values into `dashboard.html`, Git, screenshots or chat.
 
-## 4. Apply the schema
+## 4. Apply the schema (initial setup only)
 
-Use Alembic as the only schema owner. Set both URLs in `.env`, load that file in
-the shell, and apply all revisions through the Direct connection:
+Use Alembic as the only schema owner. For a new database, load `.env` in the
+shell and apply all revisions once through Direct or Session pooler port 5432:
 
 ```bash
 set -a; source .env; set +a
 alembic upgrade head
 ```
 
-`MIGRATION_DATABASE_URL` is optional in the application configuration and falls
-back to `DATABASE_URL`; keeping a separate Direct URL avoids accidentally
-running DDL through a runtime pooler. The application normalizes both
-`postgres://` and `postgresql://` to psycopg2 and forces `sslmode=require`.
-
 Then inspect the Supabase Table Editor and confirm the expected tables,
 constraints and indexes exist. Do not rely on `Base.metadata.create_all()` in
 production.
+
+`MIGRATION_DATABASE_URL` is optional in the application configuration and falls
+back to `DATABASE_URL`. Set it only when the runtime URL is unsuitable for DDL;
+never use Transaction pooler port 6543 for migrations. The application normalizes
+both `postgres://` and `postgresql://` to psycopg2 and forces `sslmode=require`.
+
+For later releases, push to `main`: Railway runs `alembic upgrade head` as its
+pre-deploy command automatically. Do not run the migration manually before each
+push. See the deploy workflow in the [README](../README.md#deploy-to-railway).
 
 ## 5. Runtime connection policy
 
