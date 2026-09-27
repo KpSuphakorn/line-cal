@@ -17,7 +17,7 @@ def get_test_db():
     return sessionmaker(bind=engine)()
 
 
-ITEMS = [{"food_name": "ข้าวมันไก่", "calories": 600.0, "protein": 25.0}]
+ITEMS = [{"food_name": "ข้าวมันไก่", "calories": 600.0, "protein": 25.0, "carbs": 70.0, "fat": 18.0}]
 
 
 def test_an_estimate_comes_back_for_the_same_description():

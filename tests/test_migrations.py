@@ -86,6 +86,10 @@ def test_fresh_sqlite_migrations_reach_head(tmp_path):
         capture_columns = {row[1]: row[3] for row in connection.execute("PRAGMA table_info(food_captures)")}
         assert capture_columns["used_ai"] == 1, "used_ai must be NOT NULL"
 
+        # Lookups are counted per user per day, so that pair must be indexed.
+        lookup_indexes = {row[1] for row in connection.execute("PRAGMA index_list(food_lookups)")}
+        assert "ix_food_lookups_user_created" in lookup_indexes
+
         tables = {
             row[0]
             for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")

@@ -69,19 +69,33 @@ def create_webapp_entry_card(tab: str, query: str = "") -> Dict[str, Any] | None
     return _bubble(title, body, [_button(label, {"type": "uri", "uri": uri}, "primary")])
 
 
-def create_food_analyzed_card(food_data: Dict[str, Any], capture_token: str, user_id: str = "") -> Dict[str, Any]:
+def _food_items(food_data: Any) -> list[Dict[str, Any]]:
     items = food_data.get("items") if isinstance(food_data, dict) else None
     if not isinstance(items, list):
         items = [food_data]
-    items = [item for item in items if isinstance(item, dict)] or [{"food_name": "อาหารที่ตรวจพบ"}]
-    total = sum(float(item.get("calories") or 0) for item in items)
-    rows = []
-    for item in items[:8]:
-        rows.append({"type": "box", "layout": "vertical", "backgroundColor": "#F8FAFC", "cornerRadius": "8px", "paddingAll": "10px", "contents": [
+    return [item for item in items if isinstance(item, dict)] or [{"food_name": "อาหารที่ตรวจพบ"}]
+
+
+def _food_rows(items: list[Dict[str, Any]]) -> list[Dict[str, Any]]:
+    """One tile per dish, shared by the confirm card and the lookup card."""
+    return [
+        {"type": "box", "layout": "vertical", "backgroundColor": "#F8FAFC", "cornerRadius": "8px", "paddingAll": "10px", "contents": [
             {"type": "text", "text": str(item.get("food_name") or "อาหารที่ตรวจพบ"), "weight": "bold", "size": "sm", "color": "#0F172A", "wrap": True},
             {"type": "text", "text": f"{item.get('portion') or '1 ที่'} • {float(item.get('calories') or 0):.0f} kcal", "size": "xs", "color": "#475569", "margin": "xs"},
             {"type": "text", "text": f"P {float(item.get('protein') or 0):.1f}g  C {float(item.get('carbs') or 0):.1f}g  F {float(item.get('fat') or 0):.1f}g", "size": "xxs", "color": "#64748B"},
-        ]})
+        ]}
+        for item in items
+    ]
+
+
+def _total_kcal(items: list[Dict[str, Any]]) -> float:
+    return sum(float(item.get("calories") or 0) for item in items)
+
+
+def create_food_analyzed_card(food_data: Dict[str, Any], capture_token: str, user_id: str = "") -> Dict[str, Any]:
+    items = _food_items(food_data)
+    total = _total_kcal(items)
+    rows = _food_rows(items)
     footer = []
     edit_url = webapp_uri("today", f"capture_token={urllib.parse.quote(capture_token)}")
     footer.append(_button(
@@ -104,6 +118,23 @@ def create_food_analyzed_card(food_data: Dict[str, Any], capture_token: str, use
         },
     ))
     return _bubble(f"🥗 AI วิเคราะห์ {len(items)} รายการ", [{"type": "text", "text": f"รวมประมาณ {total:.0f} kcal • ตรวจสอบและแก้ไขก่อนยืนยัน", "size": "sm", "color": "#475569"}, *rows], footer, "#059669")
+
+
+def create_food_lookup_card(food_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Answer `ถาม <อาหาร>`: the estimate alone, with nothing to confirm.
+
+    Deliberately has no footer. The lookup writes nothing to the user's day,
+    so a button here would only suggest otherwise; the closing line tells the
+    user how to log it if they decide to.
+    """
+    items = _food_items(food_data)
+    total = _total_kcal(items)
+    body = [
+        {"type": "text", "text": f"รวมประมาณ {total:.0f} kcal", "size": "sm", "weight": "bold", "color": "#1E3A8A"},
+        *_food_rows(items),
+        {"type": "text", "text": "ℹ️ แค่ดูข้อมูล ยังไม่ได้บันทึก — พิมพ์ กิน ตามด้วยชื่อเมนูเพื่อบันทึก", "size": "xxs", "color": "#64748B", "wrap": True, "margin": "md"},
+    ]
+    return _bubble("🔎 แคลอรีโดยประมาณ", body, color="#1D4ED8")
 
 
 def create_daily_dashboard_card(summary: Dict[str, Any], last_food_id: int | None = None) -> Dict[str, Any]:
@@ -177,7 +208,7 @@ def create_workout_logged_card(title: str, burned_kcal: float, remaining_kcal: f
 
 
 def create_welcome_guide_card(user_id: str = "") -> Dict[str, Any]:
-    rows = [{"type": "text", "text": "📸 ส่งรูปอาหาร หรือพิมพ์ กิน ตามด้วยชื่อเมนู เช่น กิน ข้าวมันไก่พิเศษ", "size": "sm", "color": "#334155", "wrap": True}, {"type": "text", "text": "➕ กินหลายอย่าง คั่นด้วย + เช่น กิน ข้าวมันไก่ + น้ำส้ม", "size": "sm", "color": "#334155", "wrap": True}, {"type": "text", "text": "📊 พิมพ์ สรุป เพื่อดูข้อมูลวันนี้", "size": "sm", "color": "#334155"}, {"type": "text", "text": "🏋️ พิมพ์ เวท เพื่อเลือกโปรแกรมเวทและรายการคาร์ดิโอ", "size": "sm", "color": "#334155", "wrap": True}, {"type": "text", "text": "📖 พิมพ์ ประวัติ เพื่อดูสถิติย้อนหลัง", "size": "sm", "color": "#334155"}]
+    rows = [{"type": "text", "text": "📸 ส่งรูปอาหาร หรือพิมพ์ กิน ตามด้วยชื่อเมนู เช่น กิน ข้าวมันไก่พิเศษ", "size": "sm", "color": "#334155", "wrap": True}, {"type": "text", "text": "➕ กินหลายอย่าง คั่นด้วย + เช่น กิน ข้าวมันไก่ + น้ำส้ม", "size": "sm", "color": "#334155", "wrap": True}, {"type": "text", "text": "🔎 พิมพ์ ถาม ตามด้วยชื่อเมนู เพื่อดูแคลอรีโดยไม่บันทึก เช่น ถาม ชาไทย", "size": "sm", "color": "#334155", "wrap": True}, {"type": "text", "text": "📊 พิมพ์ สรุป เพื่อดูข้อมูลวันนี้", "size": "sm", "color": "#334155"}, {"type": "text", "text": "🏋️ พิมพ์ เวท เพื่อเลือกโปรแกรมเวทและรายการคาร์ดิโอ", "size": "sm", "color": "#334155", "wrap": True}, {"type": "text", "text": "📖 พิมพ์ ประวัติ เพื่อดูสถิติย้อนหลัง", "size": "sm", "color": "#334155"}]
     footer = [button for button in (_uri_button("📅 วันนี้", "today"), _uri_button("🏋️ เวท", "programs"), _uri_button("📖 ประวัติ", "history")) if button]
     return _bubble("📘 วิธีใช้ LINE Cal", rows, footer)
 

@@ -1,6 +1,7 @@
 """Shared error type and call helper for Gemini food-analysis requests."""
 import json
 import logging
+import math
 import time
 from typing import Any, Iterator
 
@@ -223,12 +224,38 @@ def merge_food_items(items: list[Any], food_name: str | None = None) -> list[dic
     typed). Otherwise the components' own names are joined, since there is no
     user-typed anchor to fall back to (a food photo has none).
     """
-    items = [item for item in items if isinstance(item, dict)]
+    raw_items = items
+    items = [item for item in raw_items if isinstance(item, dict)]
+    if len(items) != len(raw_items):
+        names = [str(item.get("food_name") or "").strip() for item in items if item.get("food_name")]
+        return [{
+            "food_name": food_name or " • ".join(names) or "อาหารที่ตรวจพบ",
+            "portion": items[0].get("portion") or "1 ที่" if items else "1 ที่",
+            "calories": None,
+            "protein": None,
+            "carbs": None,
+            "fat": None,
+            "confidence": None,
+            "notes": " • ".join(names) if food_name else "",
+        }]
     if len(items) <= 1:
         return items or ([{"food_name": food_name}] if food_name else [])
 
-    def total(field: str) -> float:
-        return round(sum(float(item.get(field) or 0) for item in items), 1)
+    def total(field: str) -> float | None:
+        values = []
+        for item in items:
+            value = item.get(field)
+            if isinstance(value, bool) or value is None or (isinstance(value, str) and not value.strip()):
+                return None
+            try:
+                number = float(value)
+            except (TypeError, ValueError, OverflowError):
+                return None
+            if not math.isfinite(number) or number < 0:
+                return None
+            values.append(number)
+        result = sum(values)
+        return round(result, 1) if math.isfinite(result) else None
 
     names = [str(item.get("food_name") or "").strip() for item in items if item.get("food_name")]
     confidences = [item.get("confidence") for item in items if item.get("confidence") is not None]

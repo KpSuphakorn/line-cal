@@ -115,6 +115,7 @@ as “earned calories” or “you can eat more”.
 | --- | --- |
 | Food image | Create one or more editable food analysis drafts |
 | `กิน <description>` | Enter the same draft flow as a food image |
+| `ถาม <description>` | Show an estimate card with no buttons; nothing is logged. Shares the estimate cache and the daily AI allowance with `กิน` |
 | `สรุป` | Show today's food, exercise and net summary |
 | `เวท` | Show saved strength programs and cardio presets as individual cards |
 | `ประวัติ` | Open LIFF History |
@@ -210,8 +211,9 @@ with `(user_id, occurred_at)` where history queries need them.
 
 Do not add a quota table for the pilot. Count the user's food captures that
 actually called the model (`used_ai`) within the Bangkok day and compare it with
-`AI_DAILY_LIMIT`, default 60. A capture served from the food estimate cache
-spends nothing and is not counted. Manual editing, history and exercise remain
+`AI_DAILY_LIMIT`, default 60. Calorie lookups (`ถาม`) count against the same
+allowance through `food_lookups.used_ai`. A capture or lookup served from the
+food estimate cache spends nothing and is not counted. Manual editing, history and exercise remain
 unlimited.
 
 ## Delivery slices

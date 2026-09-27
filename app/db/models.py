@@ -303,6 +303,21 @@ class ProcessedWebhook(Base):
     processed_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
 
 
+class FoodLookup(Base):
+    """One `ถาม <อาหาร>` request: a calorie estimate shown and never logged.
+
+    It holds no food data, only what the daily AI allowance needs to count —
+    the same `used_ai` rule as a food capture, so a cached answer is free.
+    """
+    __tablename__ = "food_lookups"
+    __table_args__ = (Index("ix_food_lookups_user_created", "user_id", "created_at"),)
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String(64), ForeignKey("users.id"), nullable=False)
+    used_ai = Column(Boolean, nullable=False, server_default=true(), default=True)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+
+
 class FoodEstimateCache(Base):
     """A previously computed AI estimate for one exact food description.
 

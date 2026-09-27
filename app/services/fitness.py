@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.db.models import (
     User,
     FoodLog,
+    FoodLookup,
     WorkoutSession,
     ProgramTemplate,
     TemplateExercise,
@@ -617,6 +618,7 @@ def delete_user_account(db: Session, user_id: str) -> bool:
             db.query(ProgramExercise).filter(ProgramExercise.program_id.in_(program_ids)).delete(synchronize_session=False)
             db.query(WorkoutProgram).filter(WorkoutProgram.id.in_(program_ids)).delete(synchronize_session=False)
         db.query(CardioPreset).filter(CardioPreset.user_id == user_id).delete(synchronize_session=False)
+        db.query(FoodLookup).filter(FoodLookup.user_id == user_id).delete(synchronize_session=False)
         db.delete(user)
         db.commit()
     except Exception:

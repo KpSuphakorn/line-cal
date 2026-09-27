@@ -3,6 +3,7 @@ import urllib.parse
 import logging
 import hashlib
 import json
+import math
 from typing import Dict, Any, Optional
 
 from linebot.v3.messaging import (
@@ -28,7 +29,7 @@ from linebot.v3.webhooks import (
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.db.models import ProcessedWebhook
+from app.db.models import FoodLookup, ProcessedWebhook
 from app.services.fitness import (
     get_or_create_user,
     get_daily_summary,
@@ -37,10 +38,12 @@ from app.services.fitness import (
 from app.services.workouts import create_cardio_session, create_strength_session, list_cardio_presets, list_programs
 from app.services.ai_errors import ImageTooLargeError
 from app.services.ai_vision import analyze_food_image
-from app.services.ai_chat import parse_food_text, strip_food_command
+from app.services.ai_chat import ITEM_SEPARATOR, parse_food_text, strip_food_command
 from app.services import food_cache
 from app.services.food_capture import (
+    MAX_DRAFT_ITEMS,
     create_capture,
+    normalize_food_result,
     serialize_capture,
     ai_quota_remaining,
     confirm_capture_result,
@@ -49,6 +52,7 @@ from app.services.food_capture import (
 from app.templates.flex_cards import (
     WEBAPP_PAGES,
     create_food_analyzed_card,
+    create_food_lookup_card,
     create_daily_dashboard_card,
     create_webapp_entry_card,
     create_workout_splits_carousel,
@@ -141,6 +145,58 @@ def require_completed_profile(db: Session, user_id: str, messaging_api: Messagin
     return False
 
 
+ALLOWANCE_EXHAUSTED_TEXT = "⏳ วันนี้ใช้โควต้าวิเคราะห์อาหารครบแล้ว ลองใหม่พรุ่งนี้ได้เลยครับ"
+
+
+def _has_complete_nutrition(items, expected_count: int | None = None) -> bool:
+    """A lookup may show facts only when every dish has real numeric values."""
+    if not isinstance(items, list) or not items or (expected_count is not None and len(items) != expected_count):
+        return False
+
+    def valid_number(value) -> bool:
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            return False
+        try:
+            return math.isfinite(value) and value >= 0
+        except OverflowError:
+            return False
+
+    return all(
+        isinstance(item, dict)
+        and isinstance(item.get("food_name"), str)
+        and bool(item["food_name"].strip())
+        and all(valid_number(item.get(field)) for field in ("calories", "protein", "carbs", "fat"))
+        for item in items
+    )
+
+
+def _estimate_food(
+    db: Session,
+    user_id: str,
+    analyzer,
+    cache_text: str | None,
+    expected_count: int | None = None,
+) -> tuple[list, bool] | None:
+    """Items for one description and whether Gemini was called to get them.
+
+    Returns None when the model would be needed but the user's daily allowance
+    is spent. The cache is consulted first on purpose: a dish already in it
+    costs nothing, so it stays available even after the allowance runs out.
+    """
+    items = food_cache.lookup(db, cache_text) if cache_text else None
+    if items is not None:
+        if _has_complete_nutrition(items, expected_count):
+            return items, False
+        food_cache.delete(db, cache_text)
+    if ai_quota_remaining(db, user_id) <= 0:
+        return None
+    result = analyzer()
+    items = result.get("items", [result])
+    if cache_text and _has_complete_nutrition(items, expected_count):
+        food_cache.store(db, cache_text, items)
+    return items, True
+
+
 def _capture_food(
     db: Session,
     user_id: str,
@@ -158,19 +214,11 @@ def _capture_food(
     from the shared daily Gemini allowance.
     """
     try:
-        # The cache is consulted before the allowance is checked on purpose: a
-        # dish already in the cache spends nothing, so it stays available even
-        # to a user who has used up their day.
-        items = food_cache.lookup(db, cache_text) if cache_text else None
-        used_ai = items is None
-        if used_ai:
-            if ai_quota_remaining(db, user_id) <= 0:
-                reply_text(messaging_api, reply_token, "⏳ วันนี้ใช้โควต้าวิเคราะห์อาหารครบแล้ว ลองใหม่พรุ่งนี้ได้เลยครับ")
-                return
-            result = analyzer()
-            items = result.get("items", [result])
-            if cache_text:
-                food_cache.store(db, cache_text, items)
+        estimate = _estimate_food(db, user_id, analyzer, cache_text)
+        if estimate is None:
+            reply_text(messaging_api, reply_token, ALLOWANCE_EXHAUSTED_TEXT)
+            return
+        items, used_ai = estimate
         capture = create_capture(db, user_id, source, items, source_message_id=source_message_id, used_ai=used_ai)
         if not capture.drafts:
             reply_text(messaging_api, reply_token, "🤔 ยังไม่พบรายการอาหารที่วิเคราะห์ได้ ลองพิมพ์รายละเอียดเองอีกครั้งครับ")
@@ -182,6 +230,77 @@ def _capture_food(
     except Exception as exc:
         logger.error("Failed to create food capture: %s", exc, exc_info=True)
         reply_text(messaging_api, reply_token, "⚠️ ขออภัยครับ ไม่สามารถวิเคราะห์รายการอาหารได้ กรุณาลองใหม่อีกครั้ง")
+
+
+def _lookup_food(db: Session, user_id: str, dish: str, messaging_api: MessagingApi, reply_token: str) -> None:
+    """`ถาม <อาหาร>`: show an estimate without creating anything to confirm.
+
+    Shares the estimate path with `กิน`, including its cache, so looking a dish
+    up first makes logging it later free. The only row written is the
+    allowance record; nothing reaches the user's food history.
+    """
+    ai_attempted = False
+    usage_recorded = False
+
+    def analyze():
+        nonlocal ai_attempted
+        ai_attempted = True
+        return parse_food_text(f"กิน {dish}")
+
+    def record_ai_use():
+        nonlocal usage_recorded
+        db.add(FoodLookup(user_id=user_id, used_ai=True))
+        db.commit()
+        usage_recorded = True
+
+    try:
+        expected_count = sum(bool(part.strip()) for part in dish.split(ITEM_SEPARATOR))
+        if expected_count == 0:
+            reply_text(messaging_api, reply_token, "พิมพ์ ถาม ตามด้วยชื่ออาหาร เช่น ถาม ชาไทย ครับ")
+            return
+        if expected_count > MAX_DRAFT_ITEMS:
+            reply_text(messaging_api, reply_token, f"ถามได้ครั้งละไม่เกิน {MAX_DRAFT_ITEMS} รายการครับ ลองแบ่งถามทีละชุด")
+            return
+        cached_items = food_cache.lookup(db, dish)
+        estimate = (cached_items, False) if _has_complete_nutrition(cached_items, expected_count) else None
+        if cached_items is not None and estimate is None:
+            food_cache.delete(db, dish)
+        if estimate is None and (not settings.GEMINI_API_KEY or "mock" in settings.GEMINI_API_KEY):
+            reply_text(messaging_api, reply_token, "⚠️ ตอนนี้ AI ประเมินอาหารไม่ได้ ลองใหม่เมื่อระบบพร้อมครับ")
+            return
+        if estimate is None:
+            estimate = _estimate_food(db, user_id, analyze, dish, expected_count)
+        if estimate is None:
+            reply_text(messaging_api, reply_token, ALLOWANCE_EXHAUSTED_TEXT)
+            return
+        items, used_ai = estimate
+        if isinstance(items, list) and len(items) != expected_count:
+            if used_ai:
+                record_ai_use()
+            reply_text(messaging_api, reply_token, "🤔 ยังแยกรายการที่คั่นด้วย + ได้ไม่ครบ ลองถามทีละเมนูครับ")
+            return
+        if not _has_complete_nutrition(items, expected_count):
+            if used_ai:
+                record_ai_use()
+            reply_text(messaging_api, reply_token, "🤔 ยังประเมินข้อมูลโภชนาการของเมนูนี้ไม่ได้ ลองพิมพ์ชื่อหรือปริมาณให้ชัดขึ้นครับ")
+            return
+        if used_ai:
+            record_ai_use()
+        items = normalize_food_result({"items": items})
+        if not items:
+            reply_text(messaging_api, reply_token, "🤔 ยังประเมินเมนูนี้ไม่ได้ ลองพิมพ์ชื่อให้ละเอียดขึ้นอีกนิดครับ")
+            return
+        reply_flex(messaging_api, reply_token, "แคลอรีโดยประมาณ", create_food_lookup_card({"items": items}))
+    except Exception as exc:
+        db.rollback()
+        if ai_attempted and not usage_recorded:
+            try:
+                record_ai_use()
+            except Exception:
+                db.rollback()
+                logger.error("Failed to record food lookup AI usage", exc_info=True)
+        logger.error("Failed to look up food: %s", exc, exc_info=True)
+        reply_text(messaging_api, reply_token, "⚠️ ขออภัยครับ ไม่สามารถประเมินแคลอรีได้ กรุณาลองใหม่อีกครั้ง")
 
 
 def handle_line_events(events: list, db: Session):
@@ -266,6 +385,10 @@ def handle_text_message(event: MessageEvent, user_id: str, messaging_api: Messag
             lambda: parse_food_text(raw_text), messaging_api, event.reply_token,
             cache_text=strip_food_command(raw_text),
         )
+        return
+
+    if text.startswith("ถาม "):
+        _lookup_food(db, user_id, raw_text[len("ถาม "):].strip(), messaging_api, event.reply_token)
         return
 
     if text in {"โปรไฟล์", "profile"}:

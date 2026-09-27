@@ -80,3 +80,16 @@ def store(db: Session, text: str, items: list[dict]) -> None:
     except Exception:
         db.rollback()
         logger.warning("Food estimate cache unavailable for store", exc_info=True)
+
+
+def delete(db: Session, text: str) -> None:
+    """Remove an unusable cached estimate so the next request can re-analyze it."""
+    key = cache_key(text)
+    if not key:
+        return
+    try:
+        db.query(FoodEstimateCache).filter(FoodEstimateCache.cache_key == key).delete()
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.warning("Food estimate cache unavailable for delete", exc_info=True)

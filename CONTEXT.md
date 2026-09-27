@@ -40,10 +40,17 @@ is whatever the user typed, so the trade-off accepted here is that one person's
 wording is reused for another's identical dish.
 _Avoid_: Food history, saved meal
 
+**Food lookup**:
+The answer to `ถาม <description>`: an estimate shown as a card with nothing to
+confirm, edit or cancel. It is never a food analysis draft and never reaches
+nutrition history. It shares the food estimate cache with food capture, so
+looking a dish up first makes logging it later free.
+_Avoid_: Preview, dry run, quick check
+
 **Daily AI allowance**:
-The per-user cap on food analyses that actually reach Gemini in one Bangkok
-day. It counts captures whose `used_ai` is true, so a cache hit stays free and
-remains available after the cap is reached.
+The per-user cap on requests that actually reach Gemini in one Bangkok day —
+food captures and food lookups together. It counts rows whose `used_ai` is
+true, so a cache hit stays free and remains available after the cap is reached.
 _Avoid_: Quota, rate limit
 
 **Workout program**:

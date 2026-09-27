@@ -9,7 +9,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.db.models import FoodAnalysisDraft, FoodCapture, FoodLog
+from app.db.models import FoodAnalysisDraft, FoodCapture, FoodLog, FoodLookup
 
 BANGKOK = ZoneInfo("Asia/Bangkok")
 CAPTURE_TTL = timedelta(hours=24)
@@ -79,7 +79,7 @@ def _bounded_float(value: Any, ceiling: float) -> float:
     """
     try:
         number = float(value or 0)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return 0.0
     if number != number:  # NaN, which every comparison below would silently pass
         return 0.0
@@ -271,13 +271,22 @@ def cancel_capture_result(db: Session, user_id: str, token: str) -> CaptureActio
 
 
 def ai_quota_remaining(db: Session, user_id: str) -> int:
+    """What is left of the user's daily AI allowance for this Bangkok day.
+
+    Every path that reaches Gemini leaves a row with `used_ai` set — a food
+    capture or a calorie lookup — so the allowance is the sum of both. A cached
+    answer leaves `used_ai` false and costs nothing.
+    """
     now = datetime.now(BANGKOK)
     start = now.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
     end = start + timedelta(days=1)
-    used = db.query(FoodCapture).filter(
-        FoodCapture.user_id == user_id,
-        FoodCapture.used_ai.is_(True),
-        FoodCapture.created_at >= start,
-        FoodCapture.created_at < end,
-    ).count()
+    used = sum(
+        db.query(model).filter(
+            model.user_id == user_id,
+            model.used_ai.is_(True),
+            model.created_at >= start,
+            model.created_at < end,
+        ).count()
+        for model in (FoodCapture, FoodLookup)
+    )
     return max(0, int(settings.AI_DAILY_LIMIT) - used)
