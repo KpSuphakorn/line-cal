@@ -170,13 +170,19 @@ def create_workout_splits_carousel(
         bubbles.append(_bubble(program.get("name", "โปรแกรม"), rows, footer, "#1E3A8A"))
     for preset in selected_presets:
         activity = preset.get("custom_name") or preset.get("activity") or "คาร์ดิโอ"
-        details = [f"{preset.get('duration_min', 0)} นาที"]
+        details = []
+        if preset.get("duration_min") is not None:
+            details.append(f"{preset['duration_min']} นาที")
         if preset.get("incline_pct") is not None:
             details.append(f"ชัน {preset['incline_pct']}%")
         if preset.get("speed_kmh") is not None:
             details.append(f"{preset['speed_kmh']} กม./ชม.")
         if preset.get("distance_km") is not None:
             details.append(f"{preset['distance_km']} กม.")
+        if preset.get("steps") is not None:
+            details.append(f"{int(preset['steps']):,} ก้าว")
+        if preset.get("variant_label"):
+            details.append(preset["variant_label"])
         rows = [
             {"type": "text", "text": activity, "size": "md", "weight": "bold", "color": "#047857", "wrap": True},
             {"type": "text", "text": " • ".join(details), "size": "sm", "color": "#475569", "wrap": True},

@@ -383,10 +383,12 @@ class CardioPresetPayload(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=100)
     activity: str = Field(min_length=1, max_length=80)
     custom_name: Optional[str] = Field(default=None, min_length=1, max_length=80)
-    duration_min: float = Field(gt=0, le=1440)
+    variant: Optional[str] = Field(default=None, max_length=40)
+    duration_min: Optional[float] = Field(default=None, gt=0, le=1440)
     incline_pct: Optional[float] = Field(default=None, ge=0, le=100)
     speed_kmh: Optional[float] = Field(default=None, ge=0, le=100)
     distance_km: Optional[float] = Field(default=None, ge=0, le=1000)
+    steps: Optional[int] = Field(default=None, gt=0, le=200000)
 
 
 class CardioPayload(BaseModel):
@@ -398,10 +400,12 @@ class CardioPayload(BaseModel):
 class CardioSessionUpdatePayload(BaseModel):
     activity: Optional[str] = Field(default=None, min_length=1, max_length=80)
     custom_name: Optional[str] = Field(default=None, min_length=1, max_length=80)
+    variant: Optional[str] = Field(default=None, max_length=40)
     duration_min: Optional[float] = Field(default=None, gt=0, le=1440)
     incline_pct: Optional[float] = Field(default=None, ge=0, le=100)
     speed_kmh: Optional[float] = Field(default=None, ge=0, le=100)
     distance_km: Optional[float] = Field(default=None, ge=0, le=1000)
+    steps: Optional[int] = Field(default=None, gt=0, le=200000)
 
 
 @app.get("/api/me/cardio-presets")
@@ -490,10 +494,14 @@ def api_me_get_workout_session(session_id: int, db: Session = Depends(get_db), c
 @app.put("/api/me/workout-sessions/{session_id}")
 def api_me_update_workout_session(session_id: int, payload: WorkoutSessionUpdatePayload, db: Session = Depends(get_db), current_user: AuthenticatedUser = Depends(get_current_user)):
     require_completed_profile(current_user.subject, db)
-    data = payload.model_dump(exclude_none=True)
-    if "cardio" in data and data["cardio"] is not None:
-        data["cardio"] = {key: value for key, value in data["cardio"].items() if value is not None}
-    session = update_session(db, current_user.subject, session_id, data)
+    data = payload.model_dump(exclude_unset=True)
+    for key in ("name", "notes", "occurred_at", "estimated_duration_min", "exercises"):
+        if key in data and data[key] is None:
+            data.pop(key)
+    try:
+        session = update_session(db, current_user.subject, session_id, data)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     if not session:
         raise HTTPException(status_code=404, detail="Workout session not found")
     return serialize_session(session)

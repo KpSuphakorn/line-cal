@@ -81,8 +81,23 @@ user's food target and editable when needed.
 _Avoid_: Earned calories, calorie credit
 
 **Cardio session**:
-A workout session whose energy estimate is based on the cardio activity, the
-user's body weight and a duration entered by the user.
+An exercise session whose energy estimate uses the user's body weight and
+available details. Walking steps use an explicitly rough height-based stride
+estimate (height × 0.413–0.415, based on the [reported adult step-length
+heuristic](https://cam.tju.edu.cn/homepage/wuhuaming/PDF/ICL-GNSS2015.pdf));
+walking and running speed estimates use the [2024 Adult Compendium](https://pacompendium.com/walking/)
+and its [running table](https://pacompendium.com/running/). Incline walking
+uses the [ACSM walking equation](https://pmc.ncbi.nlm.nih.gov/articles/PMC11462406/)
+only from 3.2–5.6 km/h and up to 15% grade. Missing-time defaults are 4.8 km/h
+for walking and 8 km/h for running. Outdoor cycling may derive speed from
+distance/time; stationary cycling records virtual speed/distance but does not
+use them for energy. Cycling intensity, swim stroke/effort, and known "other"
+activities use selected approximate MET categories from the [Adult
+Compendium](https://pacompendium.com/bicycling/), [water activities](https://pacompendium.com/water-activities/),
+and [conditioning activities](https://pacompendium.com/conditioning-exercise/).
+Swimming and custom activities require real duration; unknown custom names
+never infer an activity. Time-only entries retain the existing baseline
+estimate. Calories remain approximations, not measured expenditure.
 _Avoid_: Cardio program
 
 **Bangkok day**:

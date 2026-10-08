@@ -7,11 +7,40 @@ from pathlib import Path
 
 from alembic.config import Config
 from alembic.script import ScriptDirectory
+import sqlalchemy as sa
 from sqlalchemy import create_engine
 from app.db.models import FoodAnalysisDraft, FoodLog, User
-from app.db.models import CardioPreset
+from app.db.models import CardioDetails, CardioPreset
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def create_legacy_cardio_presets(engine):
+    """Build the exact pre-0011 schema used by the 0006 adoption fixture."""
+    metadata = sa.MetaData()
+    metadata.reflect(bind=engine, only=["users"])
+    table = sa.Table(
+        "cardio_presets", metadata,
+        sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
+        sa.Column("user_id", sa.String(64), sa.ForeignKey("users.id"), nullable=False),
+        sa.Column("name", sa.String(100), nullable=False),
+        sa.Column("activity", sa.String(80), nullable=False),
+        sa.Column("custom_name", sa.String(80)),
+        sa.Column("duration_min", sa.Float(), nullable=False),
+        sa.Column("incline_pct", sa.Float()),
+        sa.Column("speed_kmh", sa.Float()),
+        sa.Column("distance_km", sa.Float()),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        sa.CheckConstraint("duration_min > 0", name="ck_cardio_preset_duration"),
+        sa.CheckConstraint("incline_pct IS NULL OR incline_pct >= 0", name="ck_cardio_preset_incline"),
+        sa.CheckConstraint("speed_kmh IS NULL OR speed_kmh >= 0", name="ck_cardio_preset_speed"),
+        sa.CheckConstraint("distance_km IS NULL OR distance_km >= 0", name="ck_cardio_preset_distance"),
+        sa.UniqueConstraint("user_id", "name", name="uq_cardio_preset_user_name"),
+    )
+    sa.Index("ix_cardio_presets_user_id", table.c.user_id)
+    table.create(engine)
+    return table
 
 
 def alembic_head() -> str:
@@ -30,6 +59,13 @@ def test_orm_matches_ownership_and_food_nutrition_contract():
 
     assert User.__table__.c.timezone.nullable is False
     assert User.__table__.c.profile_completed.nullable is False
+    assert CardioPreset.__table__.c.duration_min.nullable is True
+    assert CardioDetails.__table__.c.duration_min.nullable is True
+    assert CardioPreset.__table__.c.steps.nullable is True
+    assert CardioDetails.__table__.c.steps.nullable is True
+    assert CardioPreset.__table__.c.variant.nullable is True
+    assert CardioDetails.__table__.c.variant.nullable is True
+    assert CardioDetails.__table__.c.activity_type.nullable is True
     for model in (FoodLog, FoodAnalysisDraft):
         assert {constraint.name for constraint in model.__table__.constraints} >= {
             f"ck_{'food_log' if model is FoodLog else 'food_draft'}_calories",
@@ -96,6 +132,8 @@ def test_fresh_sqlite_migrations_reach_head(tmp_path):
         }
         assert not {"workout_logs", "user_exercises", "pending_food_analyses"} & tables
         assert "cardio_presets" in tables
+        assert {row[1] for row in connection.execute("PRAGMA table_info(cardio_presets)")} >= {"steps", "variant"}
+        assert {row[1] for row in connection.execute("PRAGMA table_info(cardio_details)")} >= {"steps", "variant", "activity_type"}
         user_columns = {row[1]: row[3] for row in connection.execute("PRAGMA table_info(users)")}
         assert user_columns["targets_customized"] == 1
 
@@ -118,6 +156,44 @@ def test_migration_url_overrides_runtime_url(tmp_path):
 
     assert migration_path.exists()
     assert not runtime_path.exists()
+
+
+def test_optional_cardio_metrics_migration_preserves_existing_rows(tmp_path):
+    database_path = tmp_path / "cardio-existing-rows.db"
+    env = os.environ.copy()
+    env["DATABASE_URL"] = f"sqlite:///{database_path}"
+    env.pop("MIGRATION_DATABASE_URL", None)
+    subprocess.run(
+        [sys.executable, "-m", "alembic", "upgrade", "0010_food_lookups"],
+        cwd=ROOT, env=env, check=True, capture_output=True, text=True,
+    )
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            "INSERT INTO cardio_presets (user_id, name, activity, duration_min, created_at, updated_at) "
+            "VALUES ('legacy', 'เดิน', 'เดิน', 20, '2026-10-08', '2026-10-08')"
+        )
+        connection.execute(
+            "INSERT INTO workout_sessions (id, user_id, session_type, name, estimated_duration_min, "
+            "estimated_calories, calories_estimated, occurred_at, created_at, updated_at) "
+            "VALUES (991, 'legacy', 'cardio', 'เดิน', 20, 88, 1, '2026-10-08', '2026-10-08', '2026-10-08')"
+        )
+        connection.execute(
+            "INSERT INTO cardio_details (session_id, activity, duration_min, met) VALUES (991, 'เดิน', 20, 3.5)"
+        )
+
+    subprocess.run(
+        [sys.executable, "-m", "alembic", "upgrade", "head"],
+        cwd=ROOT, env=env, check=True, capture_output=True, text=True,
+    )
+    with sqlite3.connect(database_path) as connection:
+        preset = connection.execute("SELECT duration_min, steps, variant FROM cardio_presets").fetchone()
+        cardio = connection.execute("SELECT duration_min, steps, met, activity_type, variant FROM cardio_details").fetchone()
+        session = connection.execute(
+            "SELECT estimated_calories, calories_estimated FROM workout_sessions WHERE id = 991"
+        ).fetchone()
+    assert preset == (20, None, None)
+    assert cardio == (20, None, 3.5, "เดิน", None)
+    assert session == (88.0, 1)
 
 
 def test_targets_customized_migration_preserves_legacy_targets(tmp_path):
@@ -169,7 +245,7 @@ def test_existing_cardio_presets_table_is_adopted_by_0006(tmp_path):
         text=True,
     )
     engine = create_engine(env["DATABASE_URL"])
-    CardioPreset.__table__.create(engine)
+    create_legacy_cardio_presets(engine)
     engine.dispose()
 
     subprocess.run(
@@ -254,11 +330,11 @@ def test_adopted_cardio_presets_downgrade_is_non_destructive(tmp_path):
         text=True,
     )
     engine = create_engine(env["DATABASE_URL"])
-    CardioPreset.__table__.create(engine)
+    legacy_cardio_presets = create_legacy_cardio_presets(engine)
     recorded_at = datetime(2026, 9, 20, tzinfo=timezone.utc)
     with engine.begin() as connection:
         connection.execute(
-            CardioPreset.__table__.insert().values(
+            legacy_cardio_presets.insert().values(
                 user_id="downgrade-user",
                 name="เดินชัน",
                 activity="เดินชัน",

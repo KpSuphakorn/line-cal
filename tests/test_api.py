@@ -129,13 +129,13 @@ def test_webapp_dashboard_endpoint():
     assert "/api/me/cardio-presets" in response.text
     assert "เลือกกิจกรรมวันนี้" in response.text
     assert "todayCardioPresetRow" not in response.text
-    assert "body.append(pace)" in response.text
+    assert "runningPaceText" in response.text
     assert "[activity,custom,duration,incline,speed,distance,pace].forEach" not in response.text
     assert "openCardio(" not in response.text
     assert "cardio=1" not in response.text
     assert "บันทึก Cardio" not in response.text
     assert "const CARDIO_CHOICES" in response.text
-    assert "knownActivity?savedActivity:'อื่นๆ','select'" in response.text
+    assert "cardio.activity_type" in response.text
     assert "button('บันทึกวันนี้',()=>logProgram" in response.text
     assert "history-controls" in response.text
     assert "program-footer" in response.text
@@ -574,10 +574,14 @@ def test_cardio_session_update_clears_fields_invalid_for_new_activity(as_user):
     assert updated.status_code == 200
     assert updated.json()["cardio"] == {
         "activity": "เดิน",
+        "activity_type": "เดิน",
+        "variant": None,
+        "variant_label": None,
         "duration_min": 25,
         "incline_pct": None,
         "speed_kmh": None,
         "distance_km": None,
+        "steps": None,
         "met": 3.5,
     }
 
@@ -586,6 +590,98 @@ def test_cardio_session_update_clears_fields_invalid_for_new_activity(as_user):
     assert saved["cardio"]["incline_pct"] is None
     assert saved["cardio"]["speed_kmh"] is None
     assert saved["cardio"]["distance_km"] is None
+
+
+def test_cardio_update_explicit_null_clears_metrics_and_calories_can_return_to_auto(as_user):
+    user_id = "cardio-explicit-null"
+    complete_profile(as_user, user_id)
+    preset = client.post("/api/me/cardio-presets", json={
+        "activity": "เดิน", "duration_min": 20, "speed_kmh": 4.8,
+    }).json()
+    session = client.post("/api/me/workout-sessions/cardio", json={"preset_id": preset["id"]}).json()
+
+    cleared = client.put(f"/api/me/workout-sessions/{session['id']}", json={
+        "cardio": {"speed_kmh": None},
+    })
+    assert cleared.status_code == 200
+    assert cleared.json()["cardio"]["speed_kmh"] is None
+    assert cleared.json()["cardio"]["met"] == 3.5
+
+    manual = client.put(f"/api/me/workout-sessions/{session['id']}", json={
+        "estimated_calories": 0,
+    })
+    assert manual.json()["estimated_calories"] == 0
+    assert manual.json()["calories_estimated"] is False
+    reset = client.put(f"/api/me/workout-sessions/{session['id']}", json={
+        "estimated_calories": None,
+    })
+    assert reset.status_code == 200
+    assert reset.json()["estimated_calories"] > 0
+    assert reset.json()["calories_estimated"] is True
+
+
+def test_other_custom_label_does_not_change_calculation_category_and_variant_can_clear(as_user):
+    user_id = "cardio-other-category-collision"
+    complete_profile(as_user, user_id)
+    preset = client.post("/api/me/cardio-presets", json={
+        "activity": "อื่นๆ", "custom_name": "จักรยาน", "variant": "yoga", "duration_min": 30,
+    })
+    assert preset.status_code == 200
+    session = client.post("/api/me/workout-sessions/cardio", json={"preset_id": preset.json()["id"]}).json()
+    assert session["cardio"]["activity"] == "จักรยาน"
+    assert session["cardio"]["activity_type"] == "อื่นๆ"
+    assert session["cardio"]["met"] == 2.3
+
+    changed = client.put(f"/api/me/workout-sessions/{session['id']}", json={
+        "cardio": {"variant": None, "duration_min": 25},
+    })
+    assert changed.status_code == 200
+    assert changed.json()["cardio"]["variant"] is None
+    assert changed.json()["cardio"]["activity"] == "จักรยาน"
+    assert changed.json()["cardio"]["activity_type"] == "อื่นๆ"
+
+
+def test_cycling_and_swimming_variants_are_validated_and_serialized(as_user):
+    user_id = "cardio-bike-swim-api"
+    complete_profile(as_user, user_id)
+    bike = client.post("/api/me/cardio-presets", json={
+        "activity": "จักรยาน", "variant": "outdoor_general", "duration_min": 20, "distance_km": 6,
+    })
+    assert bike.status_code == 200
+    bike_session = client.post("/api/me/workout-sessions/cardio", json={"preset_id": bike.json()["id"]}).json()
+    assert bike_session["cardio"]["met"] == 6.8
+    assert bike_session["cardio"]["variant_label"] == "กลางแจ้ง • ทั่วไป"
+
+    swim = client.post("/api/me/cardio-presets", json={
+        "activity": "ว่ายน้ำ", "variant": "freestyle_vigorous", "duration_min": 30, "distance_km": 0.5,
+    })
+    assert swim.status_code == 200
+    swim_session = client.post("/api/me/workout-sessions/cardio", json={"preset_id": swim.json()["id"]}).json()
+    assert swim_session["cardio"]["met"] == 9.8
+    assert swim_session["cardio"]["activity_type"] == "ว่ายน้ำ"
+    assert client.post("/api/me/cardio-presets", json={
+        "name": "ว่ายน้ำไม่มีเวลา", "activity": "ว่ายน้ำ", "variant": "general", "distance_km": 0.5,
+    }).status_code == 422
+
+
+def test_workout_update_null_preserves_strength_name_and_exercises(as_user):
+    user_id = "strength-null-preserve"
+    complete_profile(as_user, user_id)
+    program_id = client.get("/api/me/workout-programs").json()["programs"][0]["id"]
+    session = client.post("/api/me/workout-sessions", json={"program_id": program_id}).json()
+    before = client.get(f"/api/me/workout-sessions/{session['id']}").json()
+
+    response = client.put(f"/api/me/workout-sessions/{session['id']}", json={
+        "name": None, "exercises": None,
+    })
+    assert response.status_code == 200
+    assert response.json()["name"] == before["name"]
+    assert response.json()["exercises"] == before["exercises"]
+
+    reset = client.put(f"/api/me/workout-sessions/{session['id']}", json={"estimated_calories": None})
+    assert reset.status_code == 200
+    assert reset.json()["calories_estimated"] is True
+    assert reset.json()["estimated_calories"] > 0
 
 
 def test_history_periods_are_bounded_and_directly_selectable(as_user):

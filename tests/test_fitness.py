@@ -28,6 +28,7 @@ from app.services.workouts import (
     save_program,
 )
 from app.services.workouts import delete_program
+from app.services.workouts import update_session
 from app.services.food_capture import (
     cancel_capture_result,
     confirm_capture,
@@ -112,6 +113,193 @@ def test_cardio_session_requires_preset(db_session):
     complete_profile(db_session, user_id)
     with pytest.raises(ValueError, match="preset_id is required"):
         create_cardio_session(db_session, user_id, preset_id=None)
+
+
+def test_cardio_time_only_keeps_baseline_met(db_session):
+    user_id = "cardio-time-only"
+    complete_profile(db_session, user_id)
+    preset = save_cardio_preset(db_session, user_id, {"activity": "เดิน", "duration_min": 20})
+    session = create_cardio_session(db_session, user_id, preset["id"])
+    assert session.estimated_duration_min == 20
+    assert session.cardio.met == 3.5
+    assert session.estimated_calories == 88.2
+
+
+def test_cardio_distance_and_duration_determine_walking_speed(db_session):
+    user_id = "cardio-distance-time"
+    complete_profile(db_session, user_id)
+    preset = save_cardio_preset(db_session, user_id, {
+        "activity": "เดิน", "duration_min": 20, "distance_km": 1.6, "speed_kmh": 3,
+    })
+    session = create_cardio_session(db_session, user_id, preset["id"])
+    assert preset["speed_kmh"] == 3  # preserve the supplied value; distance and time drive the estimate
+    assert session.cardio.met == 3.8
+    assert session.cardio.distance_km == 1.6
+    assert session.estimated_calories == 95.8
+
+
+def test_cardio_incline_increases_walking_estimate(db_session):
+    user_id = "cardio-incline-estimate"
+    complete_profile(db_session, user_id)
+    flat = save_cardio_preset(db_session, user_id, {"activity": "เดินชัน", "duration_min": 20, "speed_kmh": 4.8})
+    incline = save_cardio_preset(db_session, user_id, {
+        "name": "ชัน", "activity": "เดินชัน", "duration_min": 20, "speed_kmh": 4.8, "incline_pct": 8,
+    })
+    flat_session = create_cardio_session(db_session, user_id, flat["id"])
+    incline_session = create_cardio_session(db_session, user_id, incline["id"])
+    assert incline_session.cardio.met > flat_session.cardio.met
+    assert incline_session.estimated_calories > flat_session.estimated_calories
+
+
+def test_running_met_uses_published_speed_bands(db_session):
+    user_id = "cardio-run-speed-bands"
+    complete_profile(db_session, user_id)
+    slow = save_cardio_preset(db_session, user_id, {
+        "activity": "วิ่ง", "duration_min": 20, "speed_kmh": 5,
+    })
+    moderate = save_cardio_preset(db_session, user_id, {
+        "name": "วิ่งเร็วขึ้น", "activity": "วิ่ง", "duration_min": 20, "speed_kmh": 8.1,
+    })
+    sprint = save_cardio_preset(db_session, user_id, {
+        "name": "วิ่งเร็วมาก", "activity": "วิ่ง", "duration_min": 20, "speed_kmh": 23,
+    })
+    assert create_cardio_session(db_session, user_id, slow["id"]).cardio.met == 3.3
+    assert create_cardio_session(db_session, user_id, moderate["id"]).cardio.met == 8.5
+    assert create_cardio_session(db_session, user_id, sprint["id"]).cardio.met == 23
+
+
+def test_cardio_steps_only_estimate_duration_and_km_take_priority(db_session):
+    user_id = "cardio-walking-steps"
+    complete_profile(db_session, user_id)
+    steps_only = save_cardio_preset(db_session, user_id, {"activity": "เดิน", "steps": 10000})
+    session = create_cardio_session(db_session, user_id, steps_only["id"])
+    assert steps_only["duration_min"] is None
+    assert steps_only["steps"] == 10000
+    assert 80 < session.estimated_duration_min < 100
+    assert session.cardio.steps == 10000
+
+    both = save_cardio_preset(db_session, user_id, {
+        "name": "ระยะทางนำ", "activity": "เดิน", "duration_min": 60, "distance_km": 5, "steps": 10000,
+    })
+    assert both["distance_km"] == 5
+    assert both["steps"] == 10000
+    assert both["speed_kmh"] is None  # inferred speed is used only for estimation, not stored as user input
+
+
+def test_cardio_requires_a_meaningful_metric_and_bounds_derived_values(db_session):
+    user_id = "cardio-validation"
+    complete_profile(db_session, user_id)
+    for data in (
+        {"activity": "เดิน"},
+        {"activity": "เดิน", "speed_kmh": 5},
+        {"activity": "เดินชัน", "incline_pct": 8},
+        {"activity": "วิ่ง", "distance_km": 1000, "duration_min": 1},
+        {"activity": "เดิน", "duration_min": 20, "steps": 1.5},
+    ):
+        with pytest.raises(ValueError):
+            save_cardio_preset(db_session, user_id, data)
+
+
+def test_cardio_update_recalculates_auto_estimate_but_preserves_manual_zero(db_session):
+    user_id = "cardio-calorie-edit"
+    complete_profile(db_session, user_id)
+    preset = save_cardio_preset(db_session, user_id, {"activity": "เดิน", "duration_min": 20})
+    session = create_cardio_session(db_session, user_id, preset["id"])
+    original = session.estimated_calories
+
+    updated = update_session(db_session, user_id, session.id, {
+        "cardio": {"duration_min": 20, "distance_km": 1.6},
+    })
+    assert updated.estimated_calories > original
+    assert updated.calories_estimated is True
+
+    updated = update_session(db_session, user_id, session.id, {"estimated_calories": 0})
+    assert updated.estimated_calories == 0
+    assert updated.calories_estimated is False
+    updated = update_session(db_session, user_id, session.id, {"estimated_calories": None})
+    assert updated.calories_estimated is True
+    assert updated.estimated_calories > 0
+
+
+def test_cycling_outdoor_uses_measured_speed_and_stationary_ignores_virtual_speed(db_session):
+    user_id = "cardio-bike-variants"
+    complete_profile(db_session, user_id)
+    outdoor = save_cardio_preset(db_session, user_id, {
+        "activity": "จักรยาน", "variant": "outdoor_general", "duration_min": 20, "distance_km": 6,
+    })
+    outdoor_session = create_cardio_session(db_session, user_id, outdoor["id"])
+    assert outdoor_session.cardio.met == 6.8
+    assert outdoor_session.cardio.activity_type == "จักรยาน"
+    assert outdoor_session.cardio.variant == "outdoor_general"
+
+    stationary = save_cardio_preset(db_session, user_id, {
+        "name": "จักรยานอยู่กับที่", "activity": "จักรยาน", "variant": "stationary_light",
+        "duration_min": 20, "distance_km": 40, "speed_kmh": 50,
+    })
+    stationary_session = create_cardio_session(db_session, user_id, stationary["id"])
+    assert stationary_session.cardio.met == 4.0
+    assert stationary_session.cardio.distance_km == 40
+    assert stationary_session.cardio.speed_kmh == 50
+
+    with pytest.raises(ValueError, match="เวลาออกกำลังกายจริง"):
+        save_cardio_preset(db_session, user_id, {
+            "name": "จักรยานไม่มีเวลา", "activity": "จักรยาน", "variant": "stationary_light", "distance_km": 5, "speed_kmh": 20,
+        })
+
+
+def test_swimming_variants_need_duration_and_other_display_name_never_changes_category(db_session):
+    user_id = "cardio-swim-other"
+    complete_profile(db_session, user_id)
+    swim = save_cardio_preset(db_session, user_id, {
+        "activity": "ว่ายน้ำ", "variant": "breaststroke_training", "duration_min": 30, "distance_km": 1,
+    })
+    swim_session = create_cardio_session(db_session, user_id, swim["id"])
+    assert swim_session.cardio.met == 10.3
+    with pytest.raises(ValueError, match="ระบุเวลา"):
+        save_cardio_preset(db_session, user_id, {"name": "ว่ายน้ำไม่ระบุเวลา", "activity": "ว่ายน้ำ", "distance_km": 1})
+
+    other = save_cardio_preset(db_session, user_id, {
+        "activity": "อื่นๆ", "custom_name": "เดิน", "variant": "yoga", "duration_min": 30,
+    })
+    other_session = create_cardio_session(db_session, user_id, other["id"])
+    assert other_session.cardio.activity == "เดิน"
+    assert other_session.cardio.activity_type == "อื่นๆ"
+    assert other_session.cardio.met == 2.3
+
+    with pytest.raises(ValueError, match="ไม่ตรง"):
+        save_cardio_preset(db_session, user_id, {"name": "swim invalid variant", "activity": "ว่ายน้ำ", "variant": "yoga", "duration_min": 20})
+
+
+def test_strength_auto_recalculates_duration_and_manual_calories_are_preserved(db_session):
+    user_id = "strength-preserves-manual"
+    complete_profile(db_session, user_id)
+    program = save_program(db_session, user_id, {"name": "Test", "exercises": [
+        {"name": "Squat", "sets": 3, "repetitions": 10},
+    ]})
+    session = create_strength_session(db_session, user_id, program["id"])
+    original_duration = session.estimated_duration_min
+    update_session(db_session, user_id, session.id, {
+        "exercises": [{"name": "Squat", "sets": 5, "repetitions": 12}],
+    })
+    assert session.estimated_duration_min > original_duration
+    update_session(db_session, user_id, session.id, {"estimated_duration_min": 60})
+    manual = update_session(db_session, user_id, session.id, {"estimated_calories": 321})
+    edited = update_session(db_session, user_id, session.id, {
+        "estimated_duration_min": 60,
+        "exercises": [{"name": "Squat", "sets": 6, "repetitions": 12}],
+    })
+    assert edited.estimated_duration_min == 60
+    assert edited.estimated_calories == 321
+    assert edited.calories_estimated is False
+
+    duration_program = save_program(db_session, user_id, {"name": "Duration", "exercises": [
+        {"name": "Press", "sets": 3, "repetitions": 10},
+    ]})
+    duration_session = create_strength_session(db_session, user_id, duration_program["id"])
+    before = duration_session.estimated_calories
+    changed = update_session(db_session, user_id, duration_session.id, {"estimated_duration_min": 50})
+    assert changed.estimated_duration_min == 50
+    assert changed.estimated_calories != before
 
 
 def test_user_programs_are_independent_and_editable(db_session):
