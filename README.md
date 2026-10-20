@@ -1,202 +1,124 @@
-<div align="center">
+# LINE Cal
 
-# 🥗 LINE Calorie & Fitness Companion
-### AI-Powered Vision Food Logging & Comprehensive Workout Tracker via LINE
+LINE Cal ใช้บันทึกอาหารและการออกกำลังกายผ่าน LINE ส่งรูปหรือพิมพ์ชื่ออาหาร
+เพื่อรับค่าประเมิน จากนั้นตรวจและแก้รายการก่อนบันทึก ส่วนโปรแกรมออกกำลังกาย
+คาร์ดิโอ สรุปประจำวัน และประวัติ เปิดได้จาก LIFF Web App
 
-[![CI Test Suite](https://github.com/KpSuphakorn/line-cal/actions/workflows/ci.yml/badge.svg)](https://github.com/KpSuphakorn/line-cal/actions/workflows/ci.yml)
-![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
-![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688?logo=fastapi&logoColor=white)
-![Google Gemini](https://img.shields.io/badge/Gemini_AI-Multimodal_Vision-8E75B2?logo=google&logoColor=white)
-![LINE API](https://img.shields.io/badge/LINE-Messaging_API_v3-00C300?logo=line&logoColor=white)
-![Database](https://img.shields.io/badge/Database-PostgreSQL_%2F_Supabase-336791?logo=postgresql&logoColor=white)
-![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker&logoColor=white)
-![Tests](https://img.shields.io/badge/Tests-pytest-blue)
+## Features
 
-<p align="center">
-  A multi-user LINE assistant built with <b>FastAPI</b>, <b>Google Gemini</b>, and <b>LINE Messaging API</b>. Food capture and workout programs are editable from the LIFF Web App.
-</p>
+- ประเมินแคลอรีและสารอาหารจากรูปหรือข้อความ โดยใช้ Gemini
+- ถามแคลอาหารด้วย `ถาม <อาหาร>` ได้โดยไม่เพิ่มลงประวัติ
+- ตรวจและแก้รายการอาหารก่อนบันทึก ยืนยันเพื่อบันทึกหรือยกเลิกได้จากแชท
+- ตั้งค่าโปรไฟล์และเป้าหมาย จัดการโปรแกรมเวท และบันทึกเวทหรือคาร์ดิโอในเว็บแอป
+- ดูสรุปประจำวันและรายการย้อนหลัง
 
-</div>
+ตัวเลขแคลอรีเป็นค่าประมาณ ตรวจรายการที่ AI วิเคราะห์ก่อนยืนยันบันทึก
 
----
+## LINE commands
 
-## 📖 Overview (ภาพรวมโปรเจกต์)
+| ข้อความ | การทำงาน |
+| --- | --- |
+| ส่งรูปอาหาร | รับรายการให้ตรวจสอบก่อนบันทึก |
+| `กิน <อาหาร>` | รับรายการอาหารที่แก้ไข แล้วยืนยันหรือยกเลิกได้ ถ้ากินหลายอย่างให้คั่นด้วย `+` เช่น `กิน ข้าวมันไก่ + น้ำส้ม` |
+| `ถาม <อาหาร>` | ดูแคลอรีและสารอาหารโดยประมาณ โดยไม่บันทึก เช่น `ถาม ชาไทย` คำสั่งนี้ใช้ผลประเมินที่เก็บไว้ร่วมกับคำสั่ง `กิน` |
+| `สรุป` หรือ `summary` | ดูสรุปอาหารและการออกกำลังกายวันนี้ |
+| `เวท` | เปิดรายการโปรแกรมเวทและคาร์ดิโอ |
+| `ประวัติ` หรือ `history` | เปิดประวัติในเว็บแอป |
+| `โปรไฟล์` หรือ `profile` | เปิดหน้าโปรไฟล์ในเว็บแอป |
+| `วิธีใช้` | ดูคำสั่งที่ใช้ได้ ข้อความอื่นจะแสดงคำแนะนำนี้ |
 
-**LINE Calorie & Fitness Companion** ถูกพัฒนาขึ้นเพื่อแก้ปัญหาความยุ่งยากในการนับแคลอรีและการบันทึกการออกกำลังกายในชีวิตประจำวัน โดยรวมทุกอย่างไว้ในแอป **LINE** ที่เปิดใช้งานอยู่ตลอดเวลา:
-- **📸 ถ่ายรูปอาหารนับแคลด้วย AI**: ส่งรูปอาหารเข้าแชต $\rightarrow$ Gemini Multimodal วิเคราะห์สัดส่วนอาหาร, ประมาณการแคลอรี และแยกสารอาหารหลัก (Protein, Carbs, Fat) ส่งกลับเป็นการ์ด Interactive Flex Message ทันที
-- **🎯 คำนวณพลังงานอัจฉริยะ (BMR / TDEE & Recomposition)**: คำนวณตามสูตร Mifflin-St Jeor ปรับโควตาแคลอรีและเป้าหมายโปรตีนอัตโนมัติตามสัดส่วนร่างกาย
-- **🏋️‍♂️ โปรแกรมออกกำลังส่วนตัว**: ระบบคัดลอก template Push, Pull และ Legs ให้ผู้ใช้แต่ละคนแก้ไขชื่อท่า เซ็ต ครั้ง น้ำหนัก และหมายเหตุได้แยกกัน
-- **📖 ประวัติย้อนหลัง**: ดูปฏิทินรายเดือน รายการอาหาร และ Workout Sessions พร้อมแก้ไขย้อนหลังได้ใน LIFF Web App
+## Local setup
 
----
+### สิ่งที่ต้องมี
 
-## 🏗️ System Architecture (สถาปัตยกรรมระบบ)
+- Python 3.12
+- Node.js 22 สำหรับรันทดสอบเว็บแอป
+- Docker Compose หากต้องการรันผ่านคอนเทนเนอร์
 
-```mermaid
-flowchart TD
-    User([LINE App User]) -->|Photo / Text Commands / Postback Buttons| LineGateway[LINE Messaging API Gateway]
-    LineGateway -->|Secure Webhook with HMAC-SHA256 Signature| FastAPIServer[Backend: FastAPI Service]
+### ติดตั้งและเริ่มใช้งาน
 
-    subgraph Core Logic Engines
-        FastAPIServer --> AICalEngine[AI Vision & Text Engine\nGemini Flash]
-        FastAPIServer --> FitnessEngine[BMR / TDEE & METs Energy Calculator]
-        FastAPIServer --> FlexGenerator[LINE Flex Message Card Generator]
-    end
-
-    subgraph Data & Storage Layer
-        FastAPIServer --> ORM[SQLAlchemy ORM + Connection Pooling]
-        ORM --> DB[(PostgreSQL / Supabase or SQLite)]
-        DB --> UsersTable[Users & Body Metrics]
-        DB --> FoodTable[Food Logs & Macros]
-        DB --> WorkoutTable[Workout & Cardio Logs]
-    end
-
-    FlexGenerator -->|Interactive JSON Bubbles & Carousels| LineGateway
-    LineGateway -->|Instant Rich Cards UI| User
-```
-
----
-
-## 🚀 Key Engineering Highlights (จุดเด่นทางวิศวกรรม)
-
-- **Clean Architecture & Modularity**: แยกโครงสร้างเป็นสัดส่วนชัดเจน (`app/services`, `app/templates`, `app/db`, `app/data`)
-- **12-Factor App & Security**: แยกการตั้งค่าความลับทั้งหมดออกจากโค้ดผ่าน Pydantic V2 Settings และ `.env` โดยเด็ดขาด
-- **Cloud Database Ready**: รองรับ **Supabase (PostgreSQL)** พร้อม Connection Pooling (`pool_size`, `max_overflow`, `pool_pre_ping`) และ fallback SQLite สำหรับ Local Development
-- **Robust Multimodal AI Pipeline**: สกัดผลลัพธ์จาก Gemini Vision ออกมาเป็น Strict JSON Schema พร้อม Error Handling และ Fallback Mock สำหรับ Local Offline Testing
-- **Automated tests**: ชุดทดสอบสูตรคำนวณ, Flex Message และ REST API รันด้วย `pytest`; ชุดทดสอบฝั่ง LIFF Web App รันด้วย `npm test` (jsdom) — ทั้งสองชุดรันใน CI ทุก push
-- **Containerized**: มาพร้อม `Dockerfile` (Multi-stage build) และ `docker-compose.yml` พร้อม Deploy ได้ทุก Cloud Provider (Render, Railway, Fly.io, AWS, VPS)
-
----
-
-## 🏋️ Workout programs
-
-หลัง onboarding ระบบจะคัดลอก template Push, Pull และ Legs เป็นโปรแกรมของผู้ใช้แต่ละคน โปรแกรมไม่ผูกกับวันในสัปดาห์ และแก้ไขได้จาก Web App; Cardio อยู่ใน entry point เดียวกับโปรแกรมเวท
-
----
-
-## 💬 Command Cheatsheet (คำสั่งใช้งานใน LINE)
-
-| คำสั่ง | ผลลัพธ์ |
-|---|---|
-| 📸 **ส่งรูปภาพอาหาร** | AI วิเคราะห์ชื่ออาหาร, แคลอรี, โปรตีน/คาร์บ/ไขมัน พร้อมการ์ดกดยืนยันบันทึก |
-| `สรุป` | ดูสรุปอาหารและการออกกำลังกายวันนี้ |
-| `กิน <รายการอาหาร>` | ให้ AI เสนอรายการอาหารเพื่อแก้ไขและยืนยันก่อนบันทึก หนึ่งจานคือหนึ่งรายการ คั่นด้วย `+` เมื่อกินหลายอย่าง เช่น `กิน ข้าวมันไก่ + น้ำส้ม` |
-| `ถาม <รายการอาหาร>` | ดูแคลอรีและสารอาหารโดยประมาณเฉย ๆ ไม่บันทึก ไม่มีปุ่มยืนยัน เช่น `ถาม ชาไทย` ใช้ cache ร่วมกับ `กิน` ถ้าเคยถามแล้วค่อยกินทีหลังจะไม่เสียโควต้าซ้ำ |
-| `เวท` | เลือกโปรแกรมเวทหรือ Cardio |
-| `ประวัติ` | เปิดปฏิทินและรายละเอียดรายการย้อนหลังใน LIFF Web App |
-| `วิธีใช้` | ดูคำสั่งที่รองรับ |
-
-ข้อความอื่นที่ไม่ตรงกับคำสั่งใด ๆ (รวมถึงคำทักทาย) จะได้การ์ด `วิธีใช้` กลับไปเสมอ
-
-คำสั่งที่เปิดหน้าเว็บ (`ประวัติ`, `โปรไฟล์`) ตอบกลับเป็นการ์ดที่มีปุ่มเปิดในตัว กดครั้งเดียวเข้า Web App ได้เลย
-
-การตั้งค่า Profile ทำในแท็บ Profile ของ LIFF Web App และต้องกรอกให้ครบก่อนบันทึกข้อมูล
-
----
-
-## 🛠️ Quick Start (วิธีติดตั้งและเริ่มรัน)
-
-### 1. Clone Repository & Setup Virtual Environment
 ```bash
 git clone https://github.com/KpSuphakorn/line-cal.git
 cd line-cal
-
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-```
-
-### 2. Configure Environment Variables
-คัดลอกไฟล์ `.env.example` เป็น `.env`:
-```bash
 cp .env.example .env
 ```
-กำหนดค่าคีย์ของคุณใน `.env`:
-```ini
-LINE_CHANNEL_SECRET=your_line_channel_secret
-LINE_CHANNEL_ACCESS_TOKEN=your_line_channel_access_token
-GEMINI_API_KEY=your_gemini_api_key
 
-# ฐานข้อมูล: เลือกใช้ Local SQLite หรือ Supabase PostgreSQL
-DATABASE_URL=sqlite:///./line_cal.db
-# หรือ Supabase (production runtime):
-# DATABASE_URL=postgresql://postgres.xxxx:your_password@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres
-# ใช้ Direct connection (หรือ Session pooler 5432) สำหรับ Alembic migrations;
-# อย่าใช้ Transaction pooler 6543 ใน migration
-# Production also requires APP_ENV=production, LINE_LOGIN_CHANNEL_ID, LIFF_ID,
-# WEBAPP_BASE_URL, and GEMINI_API_KEY.
-```
+ตอนพัฒนาในเครื่อง ระบบใช้ SQLite เป็นค่าเริ่มต้นและเปิดแอปได้โดยไม่ต้องต่อ
+บริการภายนอก หากต้องการทดสอบการส่งข้อความ LINE หรือการประเมินอาหารด้วย Gemini
+ให้ใส่คีย์ของบริการนั้นใน `.env` และอย่า commit ไฟล์นี้
 
-### 3. Run Locally
+รันเซิร์ฟเวอร์สำหรับพัฒนา:
+
 ```bash
 uvicorn app.main:app --reload --port 8000
 ```
-- Interactive API Docs (Swagger): `http://localhost:8000/docs`
-- Health Check: `http://localhost:8000/health`
 
-### 4. Run with Docker
+เปิดเว็บแอปที่ `http://localhost:8000/webapp` เอกสาร API อยู่ที่
+`http://localhost:8000/docs`; endpoint ตรวจสถานะคือ `/health` และ `/ready`
+การใช้งานแบบยืนยันตัวตนต้องตั้งค่า LINE Login และ LIFF ตามหัวข้อตั้งค่าบริการ
+
+หรือรันด้วย Docker Compose:
+
 ```bash
 docker-compose up --build
 ```
 
-### 5. Running Tests
+### ตั้งค่าบริการ
+
+คัดลอก `.env.example` เป็น `.env` แล้วใส่ค่าที่ต้องใช้:
+
+```dotenv
+LINE_CHANNEL_SECRET=...
+LINE_CHANNEL_ACCESS_TOKEN=...
+GEMINI_API_KEY=...
+
+# ฐานข้อมูลสำหรับพัฒนาในเครื่อง
+DATABASE_URL=sqlite:///./line_cal.db
+
+# Production ต้องตั้ง APP_ENV=production, LINE_LOGIN_CHANNEL_ID, LIFF_ID
+# และ WEBAPP_BASE_URL ด้วย ดูวิธีตั้งค่าฐานข้อมูลที่ docs/supabase-setup.md
+```
+
+ระบบจริงใช้ Supabase/PostgreSQL ให้เก็บรหัสผ่านฐานข้อมูลและ API key ไว้ใน
+Secret settings ของแพลตฟอร์มที่ใช้ deploy เว็บแอปตรวจ LINE Login token
+กับเซิร์ฟเวอร์ และใช้ตัวตนที่ตรวจสอบแล้วในการเข้าถึงข้อมูล ดูเหตุผลเรื่อง
+identity และฐานข้อมูลใน [ADR 0001](docs/adr-0001-storage-identity.md)
+
+วิธีตั้งค่า LIFF และ Rich Menu อยู่ที่
+[LINE LIFF and Rich Menu setup](docs/line-rich-menu-setup.md)
+
+## Tests
+
+รันทดสอบฝั่งเซิร์ฟเวอร์:
+
 ```bash
-pytest -v          # Backend: services, REST API, Flex cards, migrations
-
-npm install        # once
-npm test           # Web App: LIFF dashboard behaviour, run in jsdom
-```
-ชุดทดสอบฝั่ง Web App โหลด `app/templates/dashboard.html` ตัวจริงเข้า jsdom แล้วเรียกฟังก์ชันของหน้าเว็บโดยตรง จึงไม่มีสำเนาโค้ดที่หลุดจากของจริงได้
-
-### Deploy to Railway
-
-Push to `main` to trigger GitHub Actions tests and Railway auto-deploy. Railway's
-pre-deploy command is `alembic upgrade head`, so schema migrations run before the
-new application starts; there is no routine manual migration step. If the
-migration fails, Railway does not activate that deployment. Check its pre-deploy
-logs and fix the cause before pushing again.
-
-Railway currently auto-deploys independently of GitHub Actions, so a failed CI
-run is **not** guaranteed to stop a deploy. Enable **Wait for CI** in Railway's
-service settings when that option becomes available. Until then, check CI before
-considering a release verified. Use manual `alembic upgrade head` only for the
-initial database setup or a diagnosed repair, not before every push.
-
----
-
-## 📁 Project Structure
-
-```text
-line-cal/
-├── .github/
-│   └── workflows/
-│       └── ci.yml             # GitHub Actions CI Workflow
-├── app/
-│   ├── data/
-│   │   └── presets.py         # System Push/Pull/Legs program templates
-│   ├── db/
-│   │   ├── database.py        # SQLAlchemy engine & Supabase connection pool
-│   │   └── models.py          # Relational ORM models (food captures, programs, sessions)
-│   ├── services/
-│   │   ├── ai_vision.py       # Gemini Multimodal AI vision analysis
-│   │   ├── fitness.py         # BMR, TDEE and daily/monthly summaries
-│   │   └── line_handler.py    # LINE Webhook event dispatcher & supported commands
-│   ├── templates/
-│   │   └── flex_cards.py      # Canonical LINE Flex Message cards
-│   ├── config.py              # Pydantic Settings
-│   └── main.py                # FastAPI entrypoint & simulation endpoints
-├── tests/
-│   ├── js/                    # Web App tests: dashboard.html loaded in jsdom
-│   ├── test_api.py            # API endpoint integration tests
-│   ├── test_fitness.py        # Exercise & nutrition calculations unit tests
-│   └── test_flex_cards.py     # LINE Flex Container schema verification
-├── Dockerfile                 # Multi-stage containerization
-├── docker-compose.yml         # Container orchestration
-├── requirements.txt           # Python dependencies
-└── README.md
+pytest -q
 ```
 
----
+รันทดสอบเว็บแอป โดยติดตั้งแพ็กเกจจาก `package-lock.json` ก่อน:
 
-## 📄 License
-This project is licensed under the [MIT License](LICENSE).
+```bash
+npm ci
+npm test
+```
+
+GitHub Actions รันทดสอบทั้งสองชุดเมื่อ push หรือเปิด pull request
+การทดสอบในเครื่องใช้ค่าทดสอบแยกต่างหาก ไม่ต้องใช้ credential ของระบบจริง
+
+## Deploy to Railway
+
+เมื่อ push ไปที่ `main` GitHub Actions จะรันทดสอบ และ Railway จะเริ่ม deploy
+โดยรัน `alembic upgrade head` ก่อนเปิดแอปเวอร์ชันใหม่ ถ้าขั้นตอน migration
+ไม่ผ่าน deployment นั้นจะไม่ถูกเปิดใช้งาน
+
+Railway ยัง deploy แยกจากผล GitHub Actions ดังนั้นเทสต์ CI ที่ไม่ผ่าน
+ไม่ได้หยุด deployment โดยอัตโนมัติ ตรวจทั้งผล CI และ deployment logs
+การรัน Alembic เองใช้เฉพาะตอนตั้งฐานข้อมูลครั้งแรกหรือซ่อมปัญหาที่ตรวจพบแล้ว
+รายละเอียดอยู่ใน [Supabase setup](docs/supabase-setup.md)
+
+## License
+
+โปรเจกต์นี้ใช้สัญญาอนุญาต [MIT](LICENSE)
