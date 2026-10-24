@@ -27,6 +27,12 @@ and a fried egg on one plate is one draft; a plate plus a separate drink is
 two. Typed text is split only where the user wrote `+`, so
 `กิน ข้าวเนื้อทอดผัดพริกเกลือไข่ข้น` is one draft named as typed, while
 `กิน ข้าวมันไก่ + น้ำส้ม` is two.
+For photo captures, the result card also offers `ปรับด้วย AI`: it selects that
+exact photo draft for ten minutes, and the next plain text is a correction
+without a `แก้` prefix. Gemini re-reads the original LINE image with the current
+draft and accepted corrections. The revised draft still needs confirmation;
+manual editing, confirmation and cancellation remain available. The app
+fetches the image from LINE again instead of storing it.
 _Avoid_: Quick log
 
 **Food estimate cache**:
@@ -44,13 +50,15 @@ _Avoid_: Food history, saved meal
 The answer to `ถาม <description>`: an estimate shown as a card with nothing to
 confirm, edit or cancel. It is never a food analysis draft and never reaches
 nutrition history. It shares the food estimate cache with food capture, so
-looking a dish up first makes logging it later free.
+looking a dish up first makes logging it later free. Photo corrections use a
+FoodLookup row as their daily allowance record.
 _Avoid_: Preview, dry run, quick check
 
 **Daily AI allowance**:
 The per-user cap on requests that actually reach Gemini in one Bangkok day —
-food captures and food lookups together. It counts rows whose `used_ai` is
-true, so a cache hit stays free and remains available after the cap is reached.
+food captures, food lookups and photo corrections together. It counts rows
+whose `used_ai` is true, so a cache hit stays free and remains available after
+the cap is reached.
 _Avoid_: Quota, rate limit
 
 **Workout program**:

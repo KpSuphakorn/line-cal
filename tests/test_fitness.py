@@ -411,18 +411,18 @@ def test_editor_get_uses_parent_lock_for_expiry_transition(db_session, monkeypat
     capture.expires_at = datetime.now(timezone.utc)
     db_session.commit()
     calls = []
-    original_get = food_capture_service._get_capture
+    original_get = food_capture_service._locked_capture
 
-    def tracked_get(db, user_id, token, lock=False):
-        calls.append(lock)
-        return original_get(db, user_id, token, lock=lock)
+    def tracked_get(db, user_id, token):
+        calls.append((user_id, token))
+        return original_get(db, user_id, token)
 
-    monkeypatch.setattr(food_capture_service, "_get_capture", tracked_get)
+    monkeypatch.setattr(food_capture_service, "_locked_capture", tracked_get)
     with pytest.raises(HTTPException) as error:
         get_editable_capture(db_session, owner, capture.token)
 
     assert error.value.status_code == 410
-    assert calls == [True]
+    assert calls == [(owner, capture.token)]
     saved = db_session.query(type(capture)).filter_by(token=capture.token).one()
     assert saved.status == "cancelled"
     assert saved.cancelled_at is not None

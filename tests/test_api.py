@@ -220,6 +220,32 @@ def test_food_capture_api_keeps_confirm_idempotent_and_cancel_statuses(as_user):
     assert client.get(f"/api/me/food-captures/{cancelled_token}").status_code == 409
 
 
+def test_food_capture_api_requires_the_revision_the_editor_reviewed(as_user):
+    from app.db.database import SessionLocal
+
+    user_id = "capture-revision-owner"
+    complete_profile(as_user, user_id)
+    db = SessionLocal()
+    capture = create_capture(db, user_id, "image", [{"food_name": "ข้าว", "calories": 400}], source_message_id="revision-photo")
+    token = capture.token
+    db.close()
+
+    editor = client.get(f"/api/me/food-captures/{token}")
+    assert editor.status_code == 200 and editor.json()["revision"] == 0
+    updated = client.put(f"/api/me/food-captures/{token}", json={
+        "revision": 0,
+        "items": [{"food_name": "แก้เอง", "portion": "ครึ่งจาน", "calories": 200}],
+    })
+    assert updated.status_code == 200 and updated.json()["revision"] == 1
+    stale_update = client.put(f"/api/me/food-captures/{token}", json={
+        "revision": 0,
+        "items": [{"food_name": "ข้อมูลเก่า", "calories": 1}],
+    })
+    assert stale_update.status_code == 409
+    assert client.post(f"/api/me/food-captures/{token}/confirm", json={"revision": 0}).status_code == 409
+    assert client.post(f"/api/me/food-captures/{token}/confirm", json={"revision": 1}).status_code == 200
+
+
 def test_food_capture_api_rejects_expired_and_cross_user_editor_access(as_user):
     from app.db.database import SessionLocal
 

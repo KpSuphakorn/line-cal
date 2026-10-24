@@ -40,7 +40,27 @@ SYSTEM_PROMPT = """คุณเป็นนักโภชนาการ AI ผ
 """
 
 
-def analyze_food_image(image_bytes: bytes) -> Dict[str, Any]:
+def validate_food_image(image_bytes: bytes) -> Image.Image:
+    """Decode and downscale a valid image before quota reservation."""
+    if not image_bytes or len(image_bytes) > settings.MAX_UPLOAD_BYTES:
+        raise ImageTooLargeError("Image is empty or exceeds the accepted upload size")
+    try:
+        opened = Image.open(BytesIO(image_bytes))
+        if opened.width * opened.height > MAX_IMAGE_PIXELS:
+            raise ImageTooLargeError("Image exceeds the accepted pixel count")
+        opened.load()
+        return _downscaled(opened)
+    except ImageTooLargeError:
+        raise
+    except Exception as exc:
+        raise FoodAnalysisError("Invalid food image") from exc
+
+
+def analyze_food_image(
+    image_bytes: bytes,
+    correction_prompt: str | None = None,
+    prepared_image: Image.Image | None = None,
+) -> Dict[str, Any]:
     """
     Analyze food image using Google Gemini Vision (see ai_errors.FOOD_MODELS).
     Falls back to a structured mock response only if GEMINI_API_KEY is not configured.
@@ -65,18 +85,17 @@ def analyze_food_image(image_bytes: bytes) -> Dict[str, Any]:
     genai.configure(api_key=settings.GEMINI_API_KEY)
 
     try:
-        # Image.open reads the header only, so the pixel count can be rejected
-        # before anything is decoded into memory.
-        opened = Image.open(BytesIO(image_bytes))
-        if opened.width * opened.height > MAX_IMAGE_PIXELS:
-            raise ImageTooLargeError("Image exceeds the accepted pixel count")
-        image = _downscaled(opened)
+        image = prepared_image or validate_food_image(image_bytes)
     except ImageTooLargeError:
         raise
     except Exception as e:
         raise FoodAnalysisError("Gemini vision analysis failed") from e
 
-    data = generate_food_json(genai, [SYSTEM_PROMPT, image], log_label="vision analysis")
+    contents = [SYSTEM_PROMPT]
+    if correction_prompt:
+        contents.append(correction_prompt)
+    contents.append(image)
+    data = generate_food_json(genai, contents, log_label="vision analysis")
     raw_items = data.get("items") if isinstance(data.get("items"), list) else [data]
     return {"items": _merge_by_plate(raw_items)}
 

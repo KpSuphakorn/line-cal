@@ -593,7 +593,7 @@ def update_user_profile(db: Session, user_id: str, data: Dict[str, Any]) -> Dict
 
 def delete_user_account(db: Session, user_id: str) -> bool:
     """Delete one user's private data while retaining global program templates."""
-    user = db.query(User).filter(User.id == user_id).first()
+    user = db.query(User).filter(User.id == user_id).populate_existing().with_for_update().first()
     if user is None:
         return False
 

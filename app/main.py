@@ -28,7 +28,7 @@ from app.services.food_capture import (
     get_editable_capture,
     serialize_capture,
     update_capture,
-    confirm_capture,
+    confirm_capture_result,
     cancel_capture_result,
     ai_quota_remaining,
 )
@@ -241,6 +241,11 @@ class FoodDraftPayload(BaseModel):
     # the request, store the first MAX_DRAFT_ITEMS and drop the rest behind a
     # 200, which loses the user's edits without telling them.
     items: list[FoodDraftItemPayload] = Field(min_length=1, max_length=MAX_DRAFT_ITEMS)
+    revision: int = Field(default=0, ge=0)
+
+
+class CaptureRevisionPayload(BaseModel):
+    revision: int = Field(default=0, ge=0)
 
 
 class UserProfilePayload(BaseModel):
@@ -547,27 +552,31 @@ def api_me_food_capture(token: str, db: Session = Depends(get_db), current_user:
 @app.put("/api/me/food-captures/{token}")
 def api_me_update_food_capture(token: str, payload: FoodDraftPayload, db: Session = Depends(get_db), current_user: AuthenticatedUser = Depends(get_current_user)):
     require_completed_profile(current_user.subject, db)
-    capture = update_capture(db, current_user.subject, token, [item.model_dump(exclude_none=True) for item in payload.items])
+    capture = update_capture(db, current_user.subject, token, [item.model_dump(exclude_none=True) for item in payload.items], payload.revision)
     return serialize_capture(capture)
 
 
 @app.post("/api/me/food-captures/{token}/confirm")
-def api_me_confirm_food_capture(token: str, db: Session = Depends(get_db), current_user: AuthenticatedUser = Depends(get_current_user)):
+def api_me_confirm_food_capture(token: str, payload: CaptureRevisionPayload | None = None, db: Session = Depends(get_db), current_user: AuthenticatedUser = Depends(get_current_user)):
     require_completed_profile(current_user.subject, db)
-    entries = confirm_capture(db, current_user.subject, token)
-    if not entries:
+    result = confirm_capture_result(db, current_user.subject, token, payload.revision if payload else 0)
+    if result.status == "stale":
+        raise HTTPException(status_code=409, detail="รายการอาหารถูกแก้ไขแล้ว กรุณาเปิดรายการล่าสุดก่อนยืนยัน")
+    if result.status not in {"confirmed", "already_confirmed"}:
         raise HTTPException(status_code=409, detail="รายการอาหารหมดอายุ ถูกยกเลิก หรือไม่พร้อมยืนยันแล้วครับ")
-    return {"status": "confirmed", "entry_ids": [entry.id for entry in entries]}
+    return {"status": "confirmed", "entry_ids": [entry.id for entry in result.entries]}
 
 
 @app.post("/api/me/food-captures/{token}/cancel")
-def api_me_cancel_food_capture(token: str, db: Session = Depends(get_db), current_user: AuthenticatedUser = Depends(get_current_user)):
+def api_me_cancel_food_capture(token: str, payload: CaptureRevisionPayload | None = None, db: Session = Depends(get_db), current_user: AuthenticatedUser = Depends(get_current_user)):
     require_completed_profile(current_user.subject, db)
-    result = cancel_capture_result(db, current_user.subject, token)
+    result = cancel_capture_result(db, current_user.subject, token, payload.revision if payload else 0)
     if result.status in {"cancelled", "already_cancelled"}:
         return {"status": "cancelled"}
     if result.status == "expired":
         raise HTTPException(status_code=410, detail="รายการอาหารหมดอายุแล้ว กรุณาส่งรายการใหม่อีกครั้ง")
     if result.status == "confirmed":
         raise HTTPException(status_code=409, detail="รายการอาหารยืนยันแล้ว จึงยกเลิกไม่ได้")
+    if result.status == "stale":
+        raise HTTPException(status_code=409, detail="รายการอาหารถูกแก้ไขแล้ว กรุณาเปิดรายการล่าสุดก่อนยกเลิก")
     raise HTTPException(status_code=404, detail="ไม่พบรายการอาหารหรือรายการนี้ไม่พร้อมใช้งานแล้ว")

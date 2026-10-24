@@ -275,6 +275,52 @@ test('capture lookup network failure is shown instead of escaping as an unhandle
   window.close();
 });
 
+test('capture editor sends the reviewed revision after its save increments the version', async () => {
+  const { fetchImpl, calls } = endpointFetch({
+    'GET /api/me/food-captures/revision-demo': () => reply({
+      status: 'draft', revision: 0,
+      items: [{ food_name: 'ข้าว', portion: '1 จาน', calories: 400, protein: 20, carbs: 50, fat: 10 }],
+    }),
+    'PUT /api/me/food-captures/revision-demo': () => reply({ status: 'draft', revision: 1 }),
+    'POST /api/me/food-captures/revision-demo/confirm': () => reply({ status: 'confirmed' }),
+  });
+  const window = await authenticated(fetchImpl);
+  await window.loadCapture('revision-demo');
+  const confirm = [...window.document.querySelectorAll('.modal-actions button')].find((button) => button.textContent === 'ยืนยันทั้งหมด');
+  confirm.click();
+  await until(() => calls.some((call) => call.path.endsWith('/confirm')));
+  const update = calls.find((call) => call.method === 'PUT');
+  const commit = calls.find((call) => call.path.endsWith('/confirm'));
+  assert.equal(JSON.parse(update.body).revision, 0);
+  assert.equal(JSON.parse(commit.body).revision, 1);
+  window.close();
+});
+
+test('capture editor keeps the incremented revision when confirm fails, so cancel still works', async () => {
+  let updates = 0;
+  const { fetchImpl, calls } = endpointFetch({
+    'GET /api/me/food-captures/revision-retry': () => reply({
+      status: 'draft', revision: 0,
+      items: [{ food_name: 'ข้าว', portion: '1 จาน', calories: 400, protein: 20, carbs: 50, fat: 10 }],
+    }),
+    'PUT /api/me/food-captures/revision-retry': () => reply({ status: 'draft', revision: ++updates }),
+    'POST /api/me/food-captures/revision-retry/confirm': () => reply({ detail: 'stale' }, 409),
+    'POST /api/me/food-captures/revision-retry/cancel': () => reply({ status: 'cancelled' }),
+  });
+  const window = await authenticated(fetchImpl);
+  await window.loadCapture('revision-retry');
+  const actions = () => [...window.document.querySelectorAll('.modal-actions button')];
+  const confirm = actions().find((button) => button.textContent === 'ยืนยันทั้งหมด');
+  confirm.click();
+  await until(() => calls.some((call) => call.path.endsWith('/confirm')) && !confirm.disabled);
+  const cancel = actions().find((button) => button.textContent === 'ยกเลิก');
+  cancel.click();
+  await until(() => calls.some((call) => call.path.endsWith('/cancel')));
+  const cancelCall = calls.find((call) => call.path.endsWith('/cancel'));
+  assert.equal(JSON.parse(cancelCall.body).revision, 1);
+  window.close();
+});
+
 test('a late capture response cannot reopen a private draft after account deletion', async () => {
   const pendingCapture = deferred();
   let profileReads = 0;

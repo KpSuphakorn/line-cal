@@ -315,6 +315,7 @@ class FoodLookup(Base):
 
     It holds no food data, only what the daily AI allowance needs to count —
     the same `used_ai` rule as a food capture, so a cached answer is free.
+    Photo correction requests also use these rows as their allowance ledger.
     """
     __tablename__ = "food_lookups"
     __table_args__ = (Index("ix_food_lookups_user_created", "user_id", "created_at"),)

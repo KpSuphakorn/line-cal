@@ -36,7 +36,7 @@ def test_food_analyzed_card_valid():
             },
         ]
     }
-    card_dict = create_food_analyzed_card(food_sample, "test_temp_id")
+    card_dict = create_food_analyzed_card(food_sample, "test_temp_id", revision=2)
     container = FlexContainer.from_dict(card_dict)
     assert container.type == "bubble"
     assert "2 รายการ" in card_dict["header"]["contents"][0]["text"]
@@ -47,12 +47,24 @@ def test_food_analyzed_card_valid():
         action.get("type") == "postback"
         and "action=confirm_food_capture_chat" in action.get("data", "")
         and "capture_token=test_temp_id" in action.get("data", "")
+        and "revision=2" in action.get("data", "")
         for action in footer_actions
     )
     assert any(
         action.get("type") == "uri" and "capture_token=test_temp_id" in action.get("uri", "")
         for action in footer_actions
     )
+    assert not any("refine_food_capture" in action.get("data", "") for action in footer_actions)
+
+    photo_card = create_food_analyzed_card(food_sample, "photo-token", revision=2, allow_refinement=True)
+    photo_actions = [item["action"] for item in photo_card["footer"]["contents"]]
+    refine_action = next(action for action in photo_actions if "refine_food_capture_chat" in action.get("data", ""))
+    assert refine_action["inputOption"] == "openKeyboard"
+    assert "revision=2" in refine_action["data"]
+    assert any(action.get("label") == "✏️ แก้ไขรายการ" for action in photo_actions)
+    assert any("confirm_food_capture_chat" in action.get("data", "") for action in photo_actions)
+    assert any("cancel_food_capture_chat" in action.get("data", "") for action in photo_actions)
+    FlexContainer.from_dict(photo_card)
     assert any(
         action.get("type") == "postback"
         and "action=cancel_food_capture_chat" in action.get("data", "")

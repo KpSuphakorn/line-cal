@@ -18,6 +18,7 @@ from linebot.v3.messaging import (
     QuickReply,
     QuickReplyItem,
     URIAction,
+    PostbackAction,
 )
 from linebot.v3.webhooks import (
     MessageEvent,
@@ -29,7 +30,7 @@ from linebot.v3.webhooks import (
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.db.models import FoodLookup, ProcessedWebhook
+from app.db.models import FoodLookup, ProcessedWebhook, User
 from app.services.fitness import (
     get_or_create_user,
     get_daily_summary,
@@ -37,7 +38,7 @@ from app.services.fitness import (
 )
 from app.services.workouts import create_cardio_session, create_strength_session, list_cardio_presets, list_programs
 from app.services.ai_errors import ImageTooLargeError
-from app.services.ai_vision import analyze_food_image
+from app.services.ai_vision import analyze_food_image, validate_food_image
 from app.services.ai_chat import ITEM_SEPARATOR, parse_food_text, strip_food_command
 from app.services import food_cache
 from app.services.food_capture import (
@@ -48,6 +49,14 @@ from app.services.food_capture import (
     ai_quota_remaining,
     confirm_capture_result,
     cancel_capture_result,
+    clear_food_refinement,
+    select_food_refinement,
+    cancel_food_refinement,
+    claim_food_refinement,
+    reserve_food_refinement_quota,
+    release_food_refinement,
+    apply_food_refinement,
+    selected_food_refinement,
 )
 from app.templates.flex_cards import (
     WEBAPP_PAGES,
@@ -223,7 +232,9 @@ def _capture_food(
         if not capture.drafts:
             reply_text(messaging_api, reply_token, "🤔 ยังไม่พบรายการอาหารที่วิเคราะห์ได้ ลองพิมพ์รายละเอียดเองอีกครั้งครับ")
             return
-        card = create_food_analyzed_card({"items": serialize_capture(capture)["items"]}, capture.token, user_id=user_id)
+        serialized = serialize_capture(capture)
+        card = create_food_analyzed_card({"items": serialized["items"]}, capture.token, user_id=user_id,
+                                         revision=serialized["revision"], allow_refinement=source == "image")
         reply_flex(messaging_api, reply_token, "ตรวจสอบรายการอาหารก่อนยืนยัน", card)
     except ImageTooLargeError:
         reply_text(messaging_api, reply_token, "🖼️ รูปนี้ใหญ่เกินไปครับ ลองถ่ายใหม่หรือย่อขนาดก่อนส่งอีกครั้ง")
@@ -334,14 +345,15 @@ def handle_line_events(events: list, db: Session):
                 if isinstance(event.message, ImageMessageContent):
                     handle_image_message(event, user_id, messaging_api, blob_api, db)
                 elif isinstance(event.message, TextMessageContent):
-                    handle_text_message(event, user_id, messaging_api, db)
+                    handle_text_message(event, user_id, messaging_api, db, blob_api)
 
             elif isinstance(event, PostbackEvent):
                 handle_postback_event(event, user_id, messaging_api, db)
 
             # Record only after the handler completed, so a failed handler
             # leaves no marker and a genuine LINE redelivery still runs.
-            db.add(ProcessedWebhook(event_id=event_id, user_id=user_id))
+            owner_still_exists = db.query(User.id).filter(User.id == user_id).with_for_update().first()
+            db.add(ProcessedWebhook(event_id=event_id, user_id=user_id if owner_still_exists else None))
             db.commit()
 
         except Exception as e:
@@ -357,6 +369,7 @@ def handle_image_message(event: MessageEvent, user_id: str, messaging_api: Messa
     """Download food image transiently and use the shared capture flow."""
     if not require_completed_profile(db, user_id, messaging_api, event.reply_token):
         return
+    clear_food_refinement(db, user_id)
     message_id = event.message.id
 
     try:
@@ -370,7 +383,7 @@ def handle_image_message(event: MessageEvent, user_id: str, messaging_api: Messa
         reply_text(messaging_api, event.reply_token, "⚠️ ขออภัยครับ ไม่สามารถดาวน์โหลดหรือวิเคราะห์รูปภาพได้ กรุณาลองใหม่อีกครั้ง")
 
 
-def handle_text_message(event: MessageEvent, user_id: str, messaging_api: MessagingApi, db: Session):
+def handle_text_message(event: MessageEvent, user_id: str, messaging_api: MessagingApi, db: Session, blob_api=None):
     """Handle the explicit LINE command contract."""
     raw_text = event.message.text.strip()
     text = raw_text.lower()
@@ -378,6 +391,7 @@ def handle_text_message(event: MessageEvent, user_id: str, messaging_api: Messag
     # Food text is a capture command, so match it before anything else falls
     # through to the guide.  Photo and text share the same AI-draft review flow.
     if text.startswith("กิน "):
+        clear_food_refinement(db, user_id)
         if not require_completed_profile(db, user_id, messaging_api, event.reply_token):
             return
         _capture_food(
@@ -388,28 +402,33 @@ def handle_text_message(event: MessageEvent, user_id: str, messaging_api: Messag
         return
 
     if text.startswith("ถาม "):
+        clear_food_refinement(db, user_id)
         _lookup_food(db, user_id, raw_text[len("ถาม "):].strip(), messaging_api, event.reply_token)
         return
 
     if text in {"โปรไฟล์", "profile"}:
+        clear_food_refinement(db, user_id)
         # Profile is the one page that must remain reachable before onboarding
         # is complete, including when the user has no Rich Menu available.
         reply_webapp(messaging_api, event.reply_token, "profile")
         return
 
     if text in {"สรุป", "summary"}:
+        clear_food_refinement(db, user_id)
         if not require_completed_profile(db, user_id, messaging_api, event.reply_token):
             return
         reply_flex(messaging_api, event.reply_token, "สรุปยอดแคลอรีและสารอาหารวันนี้", create_daily_dashboard_card(get_daily_summary(db, user_id)))
         return
 
     if text in {"ประวัติ", "history"}:
+        clear_food_refinement(db, user_id)
         if not require_completed_profile(db, user_id, messaging_api, event.reply_token):
             return
         reply_webapp(messaging_api, event.reply_token, "history")
         return
 
     if text == "เวท":
+        clear_food_refinement(db, user_id)
         if not require_completed_profile(db, user_id, messaging_api, event.reply_token):
             return
         reply_flex(
@@ -424,9 +443,149 @@ def handle_text_message(event: MessageEvent, user_id: str, messaging_api: Messag
         )
         return
 
-    # Greetings, "วิธีใช้" and typos all want the same answer, so there is no
-    # separate branch for them that would only repeat this reply.
+    if text in {"ยกเลิกการปรับ", "ยกเลิกปรับ"}:
+        state, capture = selected_food_refinement(db, user_id)
+        if state == "selected":
+            status = cancel_food_refinement(db, user_id, capture.token, int((capture.ai_metadata or {}).get("revision", 0)), (capture.ai_metadata or {}).get("refine_context_id"))
+            status = "ยกเลิกโหมดปรับรายการแล้วครับ รายการอาหารเดิมยังอยู่เหมือนเดิม" if status == "cancelled" else "ℹ️ รายการนี้เปลี่ยนไปแล้ว จึงยกเลิกโหมดปรับไม่ได้ครับ"
+        else:
+            status = "ℹ️ ไม่มีรายการที่กำลังรอการปรับแล้วครับ"
+        reply_text(messaging_api, event.reply_token, status)
+        return
+
+    if text in {"ออกกำลังกาย", "โปรแกรม", "exercise", "workout", "วิธีใช้", "วิธีใช้งาน", "help", "ช่วย", "สวัสดี"}:
+        clear_food_refinement(db, user_id)
+    else:
+        event_id = getattr(event, "webhook_event_id", None) or hashlib.sha256(
+            json.dumps(event.to_dict() if hasattr(event, "to_dict") else str(event), sort_keys=True, default=str).encode()
+        ).hexdigest()
+        outcome = handle_food_refinement_text(event, user_id, raw_text, event_id, messaging_api, db, blob_api)
+        if outcome:
+            return
+
+    # Greetings, help and typos outside refinement mode use the command guide.
     reply_flex(messaging_api, event.reply_token, "วิธีใช้ LINE Cal", create_welcome_guide_card(user_id))
+
+
+def handle_food_refinement_text(event, user_id: str, instruction: str, event_id: str, messaging_api, db: Session, blob_api) -> bool:
+    state, claim = claim_food_refinement(db, user_id, instruction, event_id)
+    if state == "none":
+        return False
+    if state == "expired":
+        reply_text(messaging_api, event.reply_token, "หมดเวลาปรับรายการแล้วครับ กด ‘ปรับด้วย AI’ บนการ์ดอีกครั้งได้เลย")
+        return True
+    if state == "completed":
+        capture = claim["capture"]
+        card = create_food_analyzed_card({"items": capture["items"]}, capture["token"], revision=claim["revision"], allow_refinement=True)
+        db.commit()
+        reply_flex(messaging_api, event.reply_token, "ผลปรับรายการอาหาร", card)
+        return True
+    if state == "processing":
+        reply_text(messaging_api, event.reply_token, "กำลังปรับรายการนี้อยู่ครับ รอสักครู่แล้วค่อยส่งข้อความใหม่")
+        return True
+    if state == "consumed":
+        reply_text(messaging_api, event.reply_token, "คำขอนี้ทำงานไปแล้วครับ หากยังต้องการปรับ ให้กด ‘ปรับด้วย AI’ อีกครั้งแล้วส่งข้อความใหม่")
+        return True
+    if state == "invalid":
+        reply_text(messaging_api, event.reply_token, "พิมพ์สิ่งที่ต้องการปรับไม่เกิน 500 ตัวอักษรครับ")
+        return True
+    if state != "claimed":
+        reply_text(messaging_api, event.reply_token, "ไม่พบรายการรูปที่กำลังปรับแล้วครับ กด ‘ปรับด้วย AI’ บนการ์ดอีกครั้ง")
+        return True
+
+    token, attempt_id = claim["token"], claim["attempt_id"]
+    try:
+        if not settings.GEMINI_API_KEY or "mock" in settings.GEMINI_API_KEY:
+            release_food_refinement(db, user_id, token, attempt_id)
+            reply_text(messaging_api, event.reply_token, "ตอนนี้ AI ยังไม่พร้อมครับ รายการเดิมยังอยู่ ลองใหม่ภายหลังได้")
+            return True
+        try:
+            image_bytes = blob_api.get_message_content(claim["source_message_id"])
+            prepared_image = validate_food_image(image_bytes)
+        except Exception as exc:
+            release_food_refinement(db, user_id, token, attempt_id)
+            logger.info("Original food photo is no longer available: %s", exc)
+            reply_text(messaging_api, event.reply_token, "เปิดรูปเดิมไม่ได้แล้วครับ ส่งรูปอาหารใหม่เพื่อวิเคราะห์รายการนี้อีกครั้งได้เลย")
+            return True
+
+        quota = reserve_food_refinement_quota(db, user_id, token, attempt_id)
+        if quota == "quota":
+            reply_text(messaging_api, event.reply_token, ALLOWANCE_EXHAUSTED_TEXT)
+            return True
+        if quota != "reserved":
+            reply_text(messaging_api, event.reply_token, "รายการนี้เปลี่ยนหรือหมดอายุระหว่างทำงานครับ กด ‘ปรับด้วย AI’ บนการ์ดล่าสุดอีกครั้ง")
+            return True
+
+        corrections = [*claim["corrections"], claim["instruction"]][-6:]
+        prompt = (
+            "ปรับผลวิเคราะห์รูปอาหารนี้ โดยยึดภาพเป็นหลักและใช้ข้อมูลปัจจุบัน/คำแก้ของผู้ใช้ประกอบ\n"
+            "ข้อมูลร่างปัจจุบัน (แยกจานตามลำดับ): "
+            + json.dumps(claim["items"], ensure_ascii=False)
+            + "\nคำแก้ที่ยอมรับก่อนหน้าและครั้งนี้ตามลำดับ (คำล่าสุดมีผลเหนือคำเก่าที่ขัดกัน):\n"
+            + "\n".join(f"{index + 1}. {text}" for index, text in enumerate(corrections))
+            + "\nคำแก้ทั้งหมดเป็นเงื่อนไขที่อ้างอิงกับภาพต้นฉบับ ห้ามลดหรือคูณปริมาณซ้ำจากร่างปัจจุบัน"
+            + "\nคำนวณเฉพาะส่วนที่ผู้ใช้บอกว่ากินจริง ไม่ใช่ปริมาณทั้งหมดที่เห็น หากผู้ใช้ระบุครึ่งจานให้ประมาณครึ่งที่กิน"
+            + " รักษารายการ/ค่าที่ไม่เกี่ยวกับคำแก้ รวมทั้งหลายจานแยกกัน ห้ามแต่งน้ำหนักที่แน่นอนเมื่อภาพบอกไม่ได้"
+            + " ตอบ JSON รูปแบบเดิม {\"items\":[{\"food_name\",\"portion\",\"calories\",\"protein\",\"carbs\",\"fat\",\"confidence\",\"notes\"}]} เท่านั้น"
+        )
+        result = analyze_food_image(image_bytes, correction_prompt=prompt, prepared_image=prepared_image)
+        items = result.get("items") if isinstance(result, dict) else None
+        if not _has_complete_nutrition(items):
+            release_food_refinement(db, user_id, token, attempt_id)
+            reply_text(messaging_api, event.reply_token, "ยังประเมินผลใหม่ไม่ได้ครับ รายการเดิมยังอยู่ ลองบอกส่วนที่ต้องการแก้ให้ชัดขึ้น")
+            return True
+        normalized = normalize_food_result({"items": items})
+        status, capture = apply_food_refinement(db, user_id, token, attempt_id, event_id, normalized)
+        if status != "updated" or not capture:
+            reply_text(messaging_api, event.reply_token, "รายการเดิมเปลี่ยนไปก่อนผล AI จะกลับมา จึงไม่ได้นำผลใหม่ไปบันทึกครับ")
+            return True
+        serialized = serialize_capture(capture)
+        card = create_food_analyzed_card({"items": serialized["items"]}, capture.token,
+                                         revision=serialized["revision"], allow_refinement=True)
+        db.commit()
+        reply_flex(messaging_api, event.reply_token, "ตรวจผลปรับอาหารก่อนยืนยัน", card)
+    except Exception as exc:
+        db.rollback()
+        release_food_refinement(db, user_id, token, attempt_id)
+        logger.error("Food photo refinement failed: %s", exc, exc_info=True)
+        reply_text(messaging_api, event.reply_token, "ปรับรายการไม่สำเร็จครับ รายการเดิมยังอยู่ ลองส่งคำแก้อีกครั้งได้")
+    return True
+
+
+def _postback_revision(query_params: dict[str, str]) -> int:
+    try:
+        return int(query_params.get("revision", "0"))
+    except (TypeError, ValueError):
+        return -1
+
+
+def _reply_capture_card(db: Session, capture, messaging_api, reply_token: str) -> None:
+    serialized = serialize_capture(capture)
+    card = create_food_analyzed_card(
+        {"items": serialized["items"]}, capture.token, revision=serialized["revision"],
+        allow_refinement=capture.source == "image",
+    )
+    db.commit()
+    reply_flex(messaging_api, reply_token, "รายการอาหารล่าสุด", card)
+
+
+def _reply_capture_snapshot(db: Session, capture: dict, messaging_api, reply_token: str) -> None:
+    card = create_food_analyzed_card(
+        {"items": capture["items"]}, capture["token"], revision=capture["revision"],
+        allow_refinement=capture["source"] == "image",
+    )
+    db.commit()
+    reply_flex(messaging_api, reply_token, "รายการอาหารล่าสุด", card)
+
+
+def _reply_current_capture(db: Session, user_id: str, token: str, messaging_api, reply_token: str) -> bool:
+    from app.db.models import FoodCapture
+    capture = db.query(FoodCapture).filter(FoodCapture.user_id == user_id, FoodCapture.token == token).populate_existing().first()
+    if not capture or capture.status != "draft":
+        db.commit()
+        return False
+    _reply_capture_card(db, capture, messaging_api, reply_token)
+    return True
 
 
 def handle_postback_event(event: PostbackEvent, user_id: str, messaging_api: MessagingApi, db: Session):
@@ -471,10 +630,11 @@ def handle_postback_event(event: PostbackEvent, user_id: str, messaging_api: Mes
         if not require_completed_profile(db, user_id, messaging_api, event.reply_token):
             return
         token = query_params.get("capture_token", "").strip()
+        revision = _postback_revision(query_params)
         if not token:
             reply_text(messaging_api, event.reply_token, "❓ ไม่พบรายการอาหารหรือรายการนี้ไม่พร้อมใช้งานแล้วครับ")
             return
-        result = confirm_capture_result(db, user_id, token)
+        result = confirm_capture_result(db, user_id, token, revision)
         if result.status == "confirmed":
             reply_text(messaging_api, event.reply_token, f"✅ ยืนยันรายการอาหารแล้ว {len(result.entries)} รายการครับ")
         elif result.status == "already_confirmed":
@@ -483,6 +643,9 @@ def handle_postback_event(event: PostbackEvent, user_id: str, messaging_api: Mes
                 event.reply_token,
                 "ℹ️ รายการอาหารนี้ยืนยันไปแล้ว และแก้ไขรายการร่างไม่ได้แล้วครับ หากต้องการแก้ไข ให้เปิดหน้า วันนี้",
             )
+        elif result.status == "stale":
+            if not _reply_current_capture(db, user_id, token, messaging_api, event.reply_token):
+                reply_text(messaging_api, event.reply_token, "รายการนี้เปลี่ยนหรือยืนยันไปแล้วครับ กรุณาเปิดหน้า วันนี้เพื่อตรวจสอบ")
         elif result.status == "expired":
             reply_text(messaging_api, event.reply_token, "⏰ รายการอาหารหมดอายุแล้วครับ กรุณาส่งรายการใหม่อีกครั้ง")
         elif result.status == "cancelled":
@@ -496,10 +659,11 @@ def handle_postback_event(event: PostbackEvent, user_id: str, messaging_api: Mes
         if not require_completed_profile(db, user_id, messaging_api, event.reply_token):
             return
         token = query_params.get("capture_token", "").strip()
+        revision = _postback_revision(query_params)
         if not token:
             reply_text(messaging_api, event.reply_token, "❓ ไม่พบรายการอาหารหรือรายการนี้ไม่พร้อมใช้งานแล้วครับ")
             return
-        result = cancel_capture_result(db, user_id, token)
+        result = cancel_capture_result(db, user_id, token, revision)
         if result.status == "cancelled":
             reply_text(messaging_api, event.reply_token, "🗑️ ยกเลิกรายการอาหารแล้วครับ")
         elif result.status == "already_cancelled":
@@ -508,8 +672,49 @@ def handle_postback_event(event: PostbackEvent, user_id: str, messaging_api: Mes
             reply_today_status(messaging_api, event.reply_token, "ℹ️ รายการอาหารนี้ยืนยันไปแล้ว จึงยกเลิกจากแชทไม่ได้ครับ")
         elif result.status == "expired":
             reply_text(messaging_api, event.reply_token, "⏰ รายการอาหารหมดอายุแล้วครับ จึงยกเลิกไม่ได้")
+        elif result.status == "stale":
+            if not _reply_current_capture(db, user_id, token, messaging_api, event.reply_token):
+                reply_text(messaging_api, event.reply_token, "รายการนี้เปลี่ยนไปแล้วครับ กรุณาเปิดหน้า วันนี้เพื่อตรวจสอบ")
         else:
             reply_text(messaging_api, event.reply_token, "❓ ไม่พบรายการอาหารหรือรายการนี้ไม่พร้อมใช้งานแล้วครับ")
+
+    elif action == "refine_food_capture_chat":
+        if not require_completed_profile(db, user_id, messaging_api, event.reply_token):
+            return
+        token = query_params.get("capture_token", "").strip()
+        revision = _postback_revision(query_params)
+        if not token:
+            reply_text(messaging_api, event.reply_token, "ไม่พบรายการรูปที่ต้องการปรับแล้วครับ")
+            return
+        status, capture = select_food_refinement(db, user_id, token, revision)
+        if status == "selected" and capture:
+            context_id = capture.get("refine_context_id", "")
+            quick = QuickReply(items=[QuickReplyItem(action=PostbackAction(
+                label="ยกเลิกการปรับ",
+                data=f"action=cancel_food_refinement_chat&capture_token={urllib.parse.quote(token, safe='')}&revision={revision}&context_id={context_id}",
+                display_text="ยกเลิกการปรับ",
+            ))])
+            reply_text(messaging_api, event.reply_token, "พิมพ์สิ่งที่ต้องการแก้จากรูปนี้ได้เลยครับ เช่น ‘กินแค่ครึ่งจาน’ ไม่ต้องพิมพ์คำว่าแก้ (รอได้ 10 นาที)", quick_reply=quick)
+        elif status == "stale" and capture and capture["status"] == "draft":
+            _reply_capture_snapshot(db, capture, messaging_api, event.reply_token)
+        elif status == "not_image":
+            reply_text(messaging_api, event.reply_token, "ปรับด้วย AI ได้เฉพาะรายการที่มาจากรูปครับ")
+        else:
+            reply_text(messaging_api, event.reply_token, "รายการรูปนี้ยืนยัน ยกเลิก หรือหมดอายุแล้วครับ ส่งรูปใหม่เพื่อวิเคราะห์ได้เลย")
+
+    elif action == "cancel_food_refinement_chat":
+        if not require_completed_profile(db, user_id, messaging_api, event.reply_token):
+            return
+        token = query_params.get("capture_token", "").strip()
+        context_id = query_params.get("context_id", "").strip()
+        if not token or not context_id:
+            reply_text(messaging_api, event.reply_token, "ปุ่มยกเลิกนี้หมดอายุแล้วครับ")
+            return
+        result = cancel_food_refinement(db, user_id, token, _postback_revision(query_params), context_id)
+        if result == "cancelled":
+            reply_text(messaging_api, event.reply_token, "ยกเลิกโหมดปรับรายการแล้วครับ รายการอาหารเดิมยังอยู่เหมือนเดิม")
+        else:
+            reply_text(messaging_api, event.reply_token, "ปุ่มยกเลิกนี้หมดอายุแล้วครับ รายการอาหารเดิมยังอยู่เหมือนเดิม")
 
     else:
         # Retired chat-level food actions and old Rich Menu/Flex cards can

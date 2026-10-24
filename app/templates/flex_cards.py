@@ -92,7 +92,7 @@ def _total_kcal(items: list[Dict[str, Any]]) -> float:
     return sum(float(item.get("calories") or 0) for item in items)
 
 
-def create_food_analyzed_card(food_data: Dict[str, Any], capture_token: str, user_id: str = "") -> Dict[str, Any]:
+def create_food_analyzed_card(food_data: Dict[str, Any], capture_token: str, user_id: str = "", revision: int = 0, allow_refinement: bool = False) -> Dict[str, Any]:
     items = _food_items(food_data)
     total = _total_kcal(items)
     rows = _food_rows(items)
@@ -102,18 +102,28 @@ def create_food_analyzed_card(food_data: Dict[str, Any], capture_token: str, use
         "✅ ยืนยันทั้งหมด",
         {
             "type": "postback",
-            "data": f"action=confirm_food_capture_chat&capture_token={urllib.parse.quote(capture_token, safe='')}",
+            "data": f"action=confirm_food_capture_chat&capture_token={urllib.parse.quote(capture_token, safe='')}&revision={revision}",
             "displayText": "ยืนยันรายการอาหาร",
         },
         "primary",
     ))
     if edit_url:
         footer.append(_button("✏️ แก้ไขรายการ", {"type": "uri", "uri": edit_url}, "link"))
+    if allow_refinement:
+        footer.append(_button(
+            "🔄 ปรับด้วย AI",
+            {
+                "type": "postback",
+                "data": f"action=refine_food_capture_chat&capture_token={urllib.parse.quote(capture_token, safe='')}&revision={revision}",
+                "displayText": "ปรับรายการอาหารด้วย AI",
+                "inputOption": "openKeyboard",
+            },
+        ))
     footer.append(_button(
         "ยกเลิกรายการ",
         {
             "type": "postback",
-            "data": f"action=cancel_food_capture_chat&capture_token={urllib.parse.quote(capture_token, safe='')}",
+            "data": f"action=cancel_food_capture_chat&capture_token={urllib.parse.quote(capture_token, safe='')}&revision={revision}",
             "displayText": "ยกเลิกรายการอาหาร",
         },
     ))
