@@ -12,23 +12,25 @@ const { JSDOM } = require('jsdom');
 
 const DASHBOARD = path.join(__dirname, '..', '..', 'app', 'templates', 'dashboard.html');
 
-function loadDashboard() {
+function loadDashboard({ authenticated = false, fetchImpl, liffInit, url = 'https://example.test/webapp', dateNow } = {}) {
   const html = fs
     .readFileSync(DASHBOARD, 'utf8')
     // The LIFF SDK is a remote script; the stub in beforeParse stands in for it.
-    .replace(/<script[^>]*\ssrc=[^>]*><\/script>/g, '');
+    .replace(/<script[^>]*\ssrc=[^>]*><\/script>/g, '')
+    .replace('<script>\n  const CONFIG=', `<script>window.__LINE_CAL_CONFIG__=${authenticated ? '{liffId:"synthetic-preview"}' : '{}'};\n  const CONFIG=`);
 
   const dom = new JSDOM(html, {
     runScripts: 'dangerously',
-    url: 'https://example.test/webapp',
+    url,
     beforeParse(window) {
+      if (dateNow) window.Date.now = dateNow;
       window.liff = {
-        init: () => new Promise(() => {}),
-        isLoggedIn: () => false,
+        init: liffInit || (() => authenticated ? Promise.resolve() : new Promise(() => {})),
+        isLoggedIn: () => authenticated,
         login: () => {},
-        getIDToken: () => '',
+        getIDToken: () => authenticated ? 'synthetic-token' : '',
       };
-      window.fetch = () => new Promise(() => {});
+      window.fetch = fetchImpl || (() => new Promise(() => {}));
     },
   });
 
