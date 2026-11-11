@@ -319,6 +319,8 @@ def get_history_summary(
             "calories_in": 0.0,
             "calories_burned": 0.0,
             "protein": 0.0,
+            "carbs": 0.0,
+            "fat": 0.0,
             "food_logs": [],
             "workout_logs": [],
         }
@@ -330,12 +332,16 @@ def get_history_summary(
             continue
         item["calories_in"] += food.calories or 0
         item["protein"] += food.protein or 0
+        item["carbs"] += food.carbs or 0
+        item["fat"] += food.fat or 0
         item["food_logs"].append({
             "id": food.id,
             "name": food.food_name,
             "portion": food.portion,
             "calories": round(food.calories or 0, 1),
             "protein": round(food.protein or 0, 1),
+            "carbs": round(food.carbs or 0, 1),
+            "fat": round(food.fat or 0, 1),
             "time": local_time.strftime("%H:%M"),
         })
 
@@ -361,9 +367,14 @@ def get_history_summary(
         item["calories_in"] = round(item["calories_in"], 1)
         item["calories_burned"] = round(item["calories_burned"], 1)
         item["protein"] = round(item["protein"], 1)
+        item["carbs"] = round(item["carbs"], 1)
+        item["fat"] = round(item["fat"], 1)
 
     user = db.query(User).filter(User.id == user_id).first()
     target_kcal = float(user.daily_target_kcal) if user and user.daily_target_kcal is not None else 0.0
+    target_protein = float(user.target_protein_g) if user and user.target_protein_g is not None else 0.0
+    target_carbs = float(user.target_carbs_g) if user and user.target_carbs_g is not None else 0.0
+    target_fat = float(user.target_fat_g) if user and user.target_fat_g is not None else 0.0
     total_in = round(sum(item["calories_in"] for item in daily_data.values()), 1)
     total_burned = round(sum(item["calories_burned"] for item in daily_data.values()), 1)
     active_days = sum(1 for item in daily_data.values() if item["food_logs"] or item["workout_logs"])
@@ -400,6 +411,9 @@ def get_history_summary(
             "average_daily_calories": round(total_in / food_day_divisor, 1),
             "average_daily_burned": round(total_burned / workout_day_divisor, 1),
             "target_kcal": target_kcal,
+            "target_protein": target_protein,
+            "target_carbs": target_carbs,
+            "target_fat": target_fat,
             "peak_day": {
                 "date": peak_day["date"],
                 "date_display": peak_day["date_display"],

@@ -142,7 +142,39 @@
   function historyCalendar(data){const detail=node('div','','history-detail'),title=node('div','เลือกวันที่ต้องการดูรายละเอียด','history-detail-title'),body=node('div','','history-detail-body'),legend=node('div','','calendar-legend');[['food','อาหาร'],['workout','ออกกำลัง']].forEach(([className,label])=>{const item=node('span','','legend-item');item.append(node('i','','dot '+className),node('span',label));legend.append(item)});body.append(legend);const cal=node('div','','calendar'),days=data.daily_breakdown||[];if(historyPeriod==='month'){['อา','จ','อ','พ','พฤ','ศ','ส'].forEach(day=>cal.append(node('div',day,'weekday')));const first=new Date(historyAnchor.getFullYear(),historyAnchor.getMonth(),1).getDay();for(let i=0;i<first;i++)cal.append(node('div','','day empty'))}else['จ','อ','พ','พฤ','ศ','ส','อา'].forEach(day=>cal.append(node('div',day,'weekday')));days.forEach(day=>{const foodCount=day.food_logs?.length||0,sessionCount=day.workout_logs?.length||0,dayNumber=String(Number(day.date.slice(-2))),cell=button('',()=>selectHistoryDay(day),'day');cell.setAttribute('aria-label',`${day.date_display||day.date}${foodCount?` มีอาหาร ${foodCount} รายการ`:''}${sessionCount?` มีการออกกำลัง ${sessionCount} ครั้ง`:''}${!foodCount&&!sessionCount?' ไม่มีข้อมูล':''}`);cell.setAttribute('aria-pressed',selectedDay===day.date?'true':'false');if(foodCount||sessionCount)cell.classList.add('has-data');cell.append(node('span',dayNumber,'day-number'));const markers=node('span','','day-markers');if(foodCount)markers.append(node('i','','dot food'));if(sessionCount)markers.append(node('i','','dot workout'));cell.append(markers);if(selectedDay===day.date)cell.classList.add('selected');cal.append(cell)});body.append(cal);detail.append(title,body);return detail}
   function renderHistory(){const root=$('historyRoot');clearRoot(root);if(historyData)ensureSelectedDay(historyData);const card=section('ประวัติ');const switcher=node('div','','segmented');[['week','สัปดาห์'],['month','เดือน']].forEach(([value,label])=>{const b=button(label,()=>{historyPeriod=value;selectedDay=null;loadHistory()},'button');if(value===historyPeriod)b.classList.add('active');b.setAttribute('aria-pressed',value===historyPeriod?'true':'false');switcher.append(b)});const controls=node('div','','history-controls');controls.append(switcher);if(historyPeriod==='week'){const nav=node('div','','history-nav');nav.append(iconButton('chevronLeft','สัปดาห์ก่อน',()=>shiftHistory(-1)),node('div',historyRangeLabel(),'history-nav-label'),iconButton('chevronRight','สัปดาห์ถัดไป',()=>shiftHistory(1)));controls.append(nav,button('สัปดาห์นี้',()=>{historyAnchor=new Date();selectedDay=null;loadHistory()},'button secondary'))}else{const year=field('ปี',historyAnchor.getFullYear(),'select',{choices:(historyData?.available_years||[historyAnchor.getFullYear()]).map(item=>({value:item,label:String(item)}))}),month=field('เดือน',historyAnchor.getMonth()+1,'select',{choices:Array.from({length:12},(_,i)=>({value:i+1,label:new Date(2000,i,1).toLocaleDateString('th-TH',{month:'long'})}))});year.input.addEventListener('change',()=>{historyAnchor.setDate(1);historyAnchor.setFullYear(Number(year.input.value));selectedDay=null;loadHistory()});month.input.addEventListener('change',()=>{historyAnchor.setDate(1);historyAnchor.setMonth(Number(month.input.value)-1);selectedDay=null;loadHistory()});controls.append(year.wrap,month.wrap)}card.append(controls);if(historyData){card.append(historySummary(historyData.summary||{}),historyChart(historyData),historyCalendar(historyData))}root.append(card);const day=(historyData?.daily_breakdown||[]).find(item=>item.date===selectedDay);if(day)root.append(renderHistoryDay(day))}
   function selectHistoryDay(day){selectedDay=day.date;renderHistory()}
-  function renderHistoryDay(day){const card=section(`รายละเอียด ${day.date_display||day.date}`);card.append(node('div',`อาหาร ${Math.round(day.calories_in||0)} kcal • โปรตีน ${Math.round(day.protein||0)} g`,'notice'));(day.food_logs||[]).forEach(food=>card.append(foodRow(food)));const daySessions=day.workout_logs||[];if(daySessions.length)daySessions.forEach(session=>card.append(sessionRow(session)));else card.append(empty('ยังไม่มีรายการออกกำลังกายในวันที่เลือก'));return card}
+  function historyNutritionRow(label,value,target,unit){
+    const actual=Number(value)||0,goal=Number(target)||0;
+    const decimalPlaces=number=>{const [coefficient,exponent='0']=number.toString().toLowerCase().split('e');return Math.max(0,(coefficient.split('.')[1]?.length||0)-Number(exponent))};
+    const precision=Math.min(100,Math.max(decimalPlaces(actual),decimalPlaces(goal)));
+    const format=number=>String(Number(number.toFixed(precision)));
+    const difference=actual-goal,row=node('div','','macro'),head=node('div','','macro-head'),fill=node('div','','progress-fill');
+    let comparison;
+    if(actual===goal)comparison='ถึงเป้าหมาย';
+    else if(actual<goal)comparison=`เหลือ ${format(goal-actual)} ${unit}`;
+    else comparison=`เกิน ${format(difference)} ${unit}`;
+    head.append(node('strong',label),node('span',goal>0?`${format(actual)} / ${format(goal)} ${unit} • ${comparison}`:`${format(actual)} ${unit} • ยังไม่ได้ตั้งเป้า`));
+    fill.style.setProperty('--progress',`${goal>0?Math.min(100,Math.max(0,(actual/goal)*100)):0}%`);
+    if(goal>0&&actual>goal)fill.classList.add('over');
+    const bar=node('div','','progress');
+    bar.append(fill);
+    row.append(head,bar);
+    return row;
+  }
+  function renderHistoryDay(day){
+    const card=section(`รายละเอียด ${day.date_display||day.date}`);
+    const foodLogs=day.food_logs||[];
+    if(foodLogs.length){
+      const summary=historyData?.summary||{};
+      card.append(node('div','เทียบกับเป้าหมายปัจจุบันของโปรไฟล์ (ไม่ใช่เป้าหมายย้อนหลัง)','notice'));
+      [['แคลอรี่',day.calories_in,summary.target_kcal,'kcal'],['โปรตีน',day.protein,summary.target_protein,'g'],['คาร์บ',day.carbs,summary.target_carbs,'g'],['ไขมัน',day.fat,summary.target_fat,'g']].forEach(([label,value,target,unit])=>card.append(historyNutritionRow(label,value,target,unit)));
+      foodLogs.forEach(food=>card.append(foodRow(food)));
+    }else{
+      card.append(node('div','ไม่มีรายการอาหารที่บันทึกในวันนี้ จึงยังประเมินการเทียบเป้าหมายไม่ได้','notice'));
+    }
+    (day.workout_logs||[]).forEach(session=>card.append(sessionRow(session)));
+    if(!(day.workout_logs||[]).length)card.append(empty('ยังไม่มีรายการออกกำลังกายในวันที่เลือก'));
+    return card;
+  }
 
   async function deleteSession(id){if(!confirm('ลบรายการออกกำลังกายนี้หรือไม่?'))return;const response=await api(`/api/me/workout-sessions/${id}`,{method:'DELETE'});if(!response.ok){showToast(await apiError(response));return}selectedDay=null;refreshVisible(['today','history'])}
 

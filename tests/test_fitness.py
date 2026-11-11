@@ -620,6 +620,28 @@ def test_history_summary_uses_bangkok_week_bounds(db_session):
     assert result["daily_breakdown"][-1]["calories_in"] == 500
 
 
+def test_history_includes_daily_macros_and_current_profile_targets(db_session):
+    user_id = "history-current-targets"
+    complete_profile(db_session, user_id, daily_target_kcal=2000, target_protein_g=130, target_carbs_g=210, target_fat_g=65)
+    db_session.add(FoodLog(
+        user_id=user_id, food_name="ข้าวทดสอบ", calories=500, protein=30, carbs=60, fat=15,
+        logged_at=datetime(2026, 9, 19, 17, 0, tzinfo=timezone.utc),
+    ))
+    db_session.commit()
+
+    result = get_history_summary(db_session, user_id, "week", date(2026, 9, 20))
+    day = next(item for item in result["daily_breakdown"] if item["date"] == "2026-09-20")
+    assert (day["calories_in"], day["protein"], day["carbs"], day["fat"]) == (500, 30, 60, 15)
+    assert day["food_logs"][0]["carbs"] == 60
+    assert day["food_logs"][0]["fat"] == 15
+    assert {key: result["summary"][key] for key in ("target_kcal", "target_protein", "target_carbs", "target_fat")} == {
+        "target_kcal": 2000, "target_protein": 130, "target_carbs": 210, "target_fat": 65,
+    }
+    empty_day = next(item for item in result["daily_breakdown"] if item["date"] == "2026-09-19")
+    assert (empty_day["calories_in"], empty_day["protein"], empty_day["carbs"], empty_day["fat"]) == (0, 0, 0, 0)
+    assert empty_day["food_logs"] == []
+
+
 def test_create_strength_session_survives_concurrent_duplicate_source_event(db_session, monkeypatch):
     """A race that slips past the pre-check must resolve via the unique constraint, not a 500."""
     import app.services.workouts as workouts_module

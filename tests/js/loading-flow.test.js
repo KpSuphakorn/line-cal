@@ -475,3 +475,107 @@ test('an older history response cannot replace the period selected later', async
   assert.doesNotMatch(window.document.querySelector('#historyRoot').textContent, /111 kcal/);
   window.close();
 });
+
+test('selected history day compares all nutrition with current targets', async () => {
+  const { fetchImpl } = endpointFetch({
+    'GET /api/me/history': (call) => {
+      const date = new URL(`https://example.test${call.path}`).searchParams.get('anchor');
+      return reply({
+        summary: { target_kcal: 1900, target_protein: 110, target_carbs: 220, target_fat: 60 },
+        daily_breakdown: [{ date, date_display: '12/11', calories_in: 2100, protein: 100, carbs: 250, fat: 55,
+          food_logs: [{ id: 1, name: 'อาหารทดสอบ', calories: 2100, protein: 100, carbs: 250, fat: 55 }], workout_logs: [] }],
+        available_years: [2026],
+      });
+    },
+  });
+  const window = await authenticated(fetchImpl);
+  window.setTab('history');
+  await until(() => window.document.querySelector('#historyRoot .history-detail-body'));
+  const text = window.document.querySelector('#historyRoot').textContent;
+  assert.match(text, /เป้าหมายปัจจุบัน/);
+  assert.match(text, /2100 \/ 1900 kcal • เกิน 200 kcal/);
+  assert.match(text, /100 \/ 110 g • เหลือ 10 g/);
+  assert.match(text, /250 \/ 220 g • เกิน 30 g/);
+  assert.match(text, /55 \/ 60 g • เหลือ 5 g/);
+  window.close();
+});
+
+test('history nutrition preserves decimal over, under, and equal comparisons', async () => {
+  const { fetchImpl } = endpointFetch({
+    'GET /api/me/history': (call) => {
+      const anchor = new URL(`https://example.test${call.path}`).searchParams.get('anchor');
+      const shiftDate = (date, days) => {
+        const shifted = new Date(`${date}T00:00:00Z`);
+        shifted.setUTCDate(shifted.getUTCDate() + days);
+        return shifted.toISOString().slice(0, 10);
+      };
+      return reply({
+        summary: { target_kcal: 1900, target_protein: 100, target_carbs: 220, target_fat: 60 },
+        daily_breakdown: [
+          { date: shiftDate(anchor, -1), date_display: 'Over', calories_in: 1900, protein: 100.1, carbs: 220, fat: 60,
+            food_logs: [{ id: 3, name: 'เกินเป้าหมาย', calories: 1900, protein: 100.1, carbs: 220, fat: 60 }], workout_logs: [] },
+          { date: anchor, date_display: 'Under', calories_in: 1900, protein: 99.9, carbs: 220, fat: 60,
+            food_logs: [{ id: 4, name: 'ต่ำกว่าเป้าหมาย', calories: 1900, protein: 99.9, carbs: 220, fat: 60 }], workout_logs: [] },
+          { date: shiftDate(anchor, 1), date_display: 'Equal', calories_in: 1900, protein: 100, carbs: 220, fat: 60,
+            food_logs: [{ id: 5, name: 'ถึงเป้าหมาย', calories: 1900, protein: 100, carbs: 220, fat: 60 }], workout_logs: [] },
+        ],
+        available_years: [2026],
+      });
+    },
+  });
+  const window = await authenticated(fetchImpl);
+  window.setTab('history');
+  await until(() => window.document.querySelector('#historyRoot .history-detail-body'));
+  const root = window.document.querySelector('#historyRoot');
+  assert.match(root.textContent, /99\.9 \/ 100 g • เหลือ 0\.1 g/);
+
+  root.querySelector('button[aria-label^="Over"]').click();
+  assert.match(root.textContent, /100\.1 \/ 100 g • เกิน 0\.1 g/);
+  assert.doesNotMatch(root.textContent, /เกิน 0 g/);
+
+  root.querySelector('button[aria-label^="Equal"]').click();
+  assert.match(root.textContent, /100 \/ 100 g • ถึงเป้าหมาย/);
+  window.close();
+});
+
+test('history nutrition with zero targets is shown without inventing target progress', async () => {
+  const { fetchImpl } = endpointFetch({
+    'GET /api/me/history': (call) => {
+      const date = new URL(`https://example.test${call.path}`).searchParams.get('anchor');
+      return reply({
+        summary: { target_kcal: 0, target_protein: 0, target_carbs: 0, target_fat: 0 },
+        daily_breakdown: [{ date, date_display: '12/11', calories_in: 420, protein: 20, carbs: 55, fat: 12,
+          food_logs: [{ id: 2, name: 'อาหารไม่มีเป้าหมาย', calories: 420, protein: 20, carbs: 55, fat: 12 }], workout_logs: [] }],
+        available_years: [2026],
+      });
+    },
+  });
+  const window = await authenticated(fetchImpl);
+  window.setTab('history');
+  await until(() => window.document.querySelector('#historyRoot .history-detail-body'));
+  const text = window.document.querySelector('#historyRoot').textContent;
+  assert.match(text, /เทียบกับเป้าหมายปัจจุบัน/);
+  assert.equal((text.match(/ยังไม่ได้ตั้งเป้า/g) || []).length, 4);
+  assert.doesNotMatch(text, /เหลือ|เกิน/);
+  window.close();
+});
+
+test('history day with no food does not imply target progress', async () => {
+  const { fetchImpl } = endpointFetch({
+    'GET /api/me/history': (call) => {
+      const date = new URL(`https://example.test${call.path}`).searchParams.get('anchor');
+      return reply({
+        summary: { target_kcal: 1900, target_protein: 110, target_carbs: 220, target_fat: 60 },
+        daily_breakdown: [{ date, date_display: '12/11', calories_in: 0, protein: 0, carbs: 0, fat: 0, food_logs: [], workout_logs: [] }],
+        available_years: [2026],
+      });
+    },
+  });
+  const window = await authenticated(fetchImpl);
+  window.setTab('history');
+  await until(() => window.document.querySelector('#historyRoot .history-detail-body'));
+  const text = window.document.querySelector('#historyRoot').textContent;
+  assert.match(text, /ไม่มีรายการอาหารที่บันทึกในวันนี้/);
+  assert.doesNotMatch(text, /เหลือ|เกิน|ยังไม่ได้ตั้งเป้า/);
+  window.close();
+});

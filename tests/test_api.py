@@ -724,6 +724,36 @@ def test_history_periods_are_bounded_and_directly_selectable(as_user):
     assert len(month.json()["daily_breakdown"]) == 30
 
 
+def test_history_api_returns_daily_nutrition_and_current_targets(as_user):
+    from app.db.database import SessionLocal
+    from app.db.models import FoodLog
+
+    user_id = "history-nutrition-api-owner"
+    complete_profile(as_user, user_id, daily_target_kcal=2050, target_protein_g=135, target_carbs_g=225, target_fat_g=62)
+    db = SessionLocal()
+    db.add(FoodLog(
+        user_id=user_id,
+        food_name="อาหารในประวัติ",
+        calories=640,
+        protein=35,
+        carbs=72,
+        fat=18,
+        logged_at=datetime(2026, 9, 19, 17, 30, tzinfo=timezone.utc),
+    ))
+    db.commit()
+    db.close()
+
+    response = client.get("/api/me/history?period=week&anchor=2026-09-20")
+    assert response.status_code == 200
+    data = response.json()
+    day = next(item for item in data["daily_breakdown"] if item["date"] == "2026-09-20")
+    assert (day["calories_in"], day["protein"], day["carbs"], day["fat"]) == (640, 35, 72, 18)
+    assert (day["food_logs"][0]["carbs"], day["food_logs"][0]["fat"]) == (72, 18)
+    assert {key: data["summary"][key] for key in ("target_kcal", "target_protein", "target_carbs", "target_fat")} == {
+        "target_kcal": 2050, "target_protein": 135, "target_carbs": 225, "target_fat": 62,
+    }
+
+
 def test_history_workout_details_use_today_session_display_fields_and_dynamic_years(as_user):
     from datetime import datetime, timezone
     from zoneinfo import ZoneInfo
